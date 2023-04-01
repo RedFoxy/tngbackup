@@ -15,3 +15,9 @@ Da realizzare:
 --- key-change
 --- key-export
 --- key-import
+
+Suggerimenti:
+- Per controllare che il repository esista si piò usare il "borg list" e non il "borg check"
+
+Potenziali bug:
+- Create repo remote -> Potebbe non creare il repo e le directory in remoto
