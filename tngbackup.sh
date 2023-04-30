@@ -1,11 +1,14 @@
 #!/bin/bash
-SVER=0.3.1
+SVER=0.3.2
 SDSC="The Next Gen Backup"
 
 set -o noglob
 error() {
+  if [ -t 1 ]; then
+    echo "$(tput blink; tput setb 4; tput setaf 1; tput bold)$1$(tput sgr0)";
+  else
   echo "$1";
-
+  fi
 }
 
 if [ ! -n "$Repo_PASSPHRASE" ]; then
