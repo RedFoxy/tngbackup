@@ -4,3 +4,6 @@
 
   in quanto se sono tutti veri esce
 
+- Verificare che alla prima interazione di Borg non rimanga fermo al messaggio "Do you want to continue? [yN] " in caso inviare y
+
+- Aggiungere i comandi esterni da riga di comando
