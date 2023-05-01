@@ -1,0 +1,6 @@
+- Sistemare il test
+
+  if ! [[ ($Local == "y" && ! -z "$Local_Repo") || ($Remote == "y" && ! -z "$Remote_Repo") ]]; then error "There are no repository."; exit 1; fi
+
+  in quanto se sono tutti veri esce
+
