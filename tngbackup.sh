@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER=0.7.5
+SVER=0.7.5a
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -281,29 +281,6 @@ log() {
   fi
 }
 
-########################################################################################################################################### Check path
-
-debug "Backup path/files: $BACKUP_PATH\n";
-
-BACKUP_PATH=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file/dir to backup?
-BACKUP_PATH=""
-BACKUP_NOTEXISTS=""
-for tmpPath in "${BACKUP_PATH[@]}"; do
-  if [[ -e "$tmpPath" ]]; then                     # Is it exists?
-    BACKUP_PATH+=" $tmpPath"
-  else
-    BACKUP_NOTEXISTS+=" $tmpPath"
-  fi
-done
-unset tmpPath
-
-debug "Exists backup path/files: ${BACKUP_PATH}\nNOT exists backup path/files: ${BACKUP_NOTEXISTS}\n############################################################################\n";
-
-if [ "${BACKUP_PATH}" == "" ]; then
-  error "Files or directory not found! ${BACKUP_PATH}";
-  exit 1;
-fi
-
 ########################################################################################################################################### Exclude list
 
 debug "Backup exclude: ${BACKUP_EXCL}\n############################################################################\n";
@@ -324,6 +301,30 @@ if [ ! -z "${PRERUN}" ]; then
   if [ $SHOWTEXT == "y" ]; then PRERUN_LOG=$(log -n "Pre-run script"); fi
   runCMD "${PRERUN}"
   if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); PRERUN_LOG=${PRERUN_LOG}$(finished_after $Step_End); fi
+fi
+
+########################################################################################################################################### Check path
+
+debug "Backup path/files: $BACKUP_PATH\n";
+
+BACKUP_PATH=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file/dir to backup?
+BACKUP_PATH=""
+BACKUP_NOTEXISTS=""
+for tmpPath in "${BACKUP_PATH[@]}"; do
+echo file: $tmpPath
+  if [[ -e "$tmpPath" ]]; then                     # Is it exists?
+    BACKUP_PATH+=" $tmpPath"
+  else
+    BACKUP_NOTEXISTS+=" $tmpPath"
+  fi
+done
+unset tmpPath
+
+debug "Exists backup path/files: ${BACKUP_PATH}\nNOT exists backup path/files: ${BACKUP_NOTEXISTS}\n############################################################################\n";
+
+if [ "${BACKUP_PATH}" == "" ]; then
+  error "There are no files or directory to backup! ${BACKUP_PATH}";
+  exit 1;
 fi
 
 ########################################################################################################################################### Local
