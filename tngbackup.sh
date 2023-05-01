@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER=0.7.7c
+SVER=0.7.8
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -211,7 +211,7 @@ borg_prune() {
 borg_compact() {
   if [ "$1" == "local" ]; then
     export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
-    runCMD "borg compact --cleanup-commits ${LOCAL_REPO}"
+    runCMD "borg compact ${LOCAL_REPO}"
     unset BORG_PASSPHRASE; unset BORG_RSH;
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to compact repository: "${LOCAL_REPO};
@@ -219,7 +219,7 @@ borg_compact() {
   else
     if [ "$1" == "remote" ]; then
       export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-      runCMD "${SSHPASS}borg compact --cleanup-commits ${Repo_SSH}"
+      runCMD "${SSHPASS}borg compact ${Repo_SSH}"
       unset BORG_PASSPHRASE; unset BORG_RSH;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to compact repository: "${Repo_SSH};
@@ -418,8 +418,8 @@ if [ $LOCAL == "y" ]; then                                              # Backup
           error "Skip local backup...";
           Local_SKIP=1;
         fi
-      else
-        if [[ ! "${RUN_OUT,,}" == "directory"  ]]; then                   # It exists but isn't a directory
+      else                                                                # It exists but isn't a directory or a symbolic link to a directory
+        if [[ "${RUN_OUT,,}" != "directory" ]] && [[ "${RUN_OUT,,}" != "symbolic link" ]]; then
           error ${LOCAL_REPO}" already exists but it isn't a directory.";
           error "Skip local backup...";
           Local_SKIP=1;
@@ -558,8 +558,8 @@ if [ $REMOTE == "y" ]; then                                             # Backup
             error "Skip remote backup...";
             Remote_SKIP=1;
           fi
-        else
-          if [[ ! "${RUN_OUT,,}" == "directory"  ]]; then               # It exists but isn't a directory
+        else                                                            # It exists but isn't a directory or a symbolic link to a directory
+          if [[ "${RUN_OUT,,}" != "directory" ]] && [[ "${RUN_OUT,,}" != "symbolic link" ]]; then
             error ${REMOTE_REPO}" already exists but it isn't a directory.";
             error "Skip remote backup...";
             Remote_SKIP=1;
@@ -616,10 +616,9 @@ fi
 
 if [ $SHOWTEXT == "y" ]; then
   echo "############################################################################";
-  log "Repository" ${Repository};
-  log "Unique id" ${Backup_UID};
+  log "Backup Unique ID" ${Backup_UID};
   echo "#";
-  log "Path to backup" ${BORG_PATH};
+  log "Path to backup" "${BORG_PATH}";
   log "Path not found" ${BACKUP_NOTEXISTS};
   log "Pattern to Exclude" ${BACKUP_EXCL};
   echo "#";
@@ -674,6 +673,7 @@ if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
     unset BORG_PASSPHRASE;
     if [ $RUN_ERR -gt 0 ]; then # Fail to backup repository
       echo "Failed to create backup: "${LOCAL_REPO};
+      echo "Message: ${RUN_OUT}";
       exit 1;
     fi
 
@@ -738,6 +738,7 @@ if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
     unset BORG_PASSPHRASE; unset BORG_RSH;
     if [ $RUN_ERR -gt 0 ]; then # Fail to backup repository
       echo "Failed to create backup: "${REMOTE_REPO};
+      echo "Message: ${RUN_OUT}";
       exit 1;
     fi
 
