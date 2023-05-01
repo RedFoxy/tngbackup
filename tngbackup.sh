@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER=0.7.5a
+SVER=0.7.6
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -76,7 +76,7 @@ if [[ ! "$LCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then LCREATE_REPO_DIR="n"; else L
 if [[ ! "$RCREATE_REPO"        =~ ^[ynYN]$ ]]; then RCREATE_REPO="n";     else RCREATE_REPO="${RCREATE_REPO,,}";         fi
 if [[ ! "$RCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then RCREATE_REPO_DIR="n"; else RCREATE_REPO_DIR="${RCREATE_REPO_DIR,,}"; fi
 
-if ! [[ ($Local == "y" && ! -z "$Local_Repo") || ($Remote == "y" && ! -z "$Remote_Repo") ]]; then error "There are no repository."; exit 1; fi
+#if ! [[ ($Local == "y" && ! -z "$Local_Repo") || ($Remote == "y" && ! -z "$Remote_Repo") ]]; then error "There are no repository."; exit 1; fi
 
 if [[ ! $Local_keep_last      =~ ^[0-9]{1,3}$ ]];     then Local_keep_last=0;     fi
 if [[ ! $Local_keep_hourly    =~ ^(-|)[0-9]{1,3}$ ]]; then Local_keep_hourly=0;  fi
@@ -272,12 +272,19 @@ log() {
     local text=$1;
     local space=19;
 
-    if [ "$text" == "-n" ]; then
-      text="$2"
-      printf "#"' %s%*s: '"`date "+%d/%m/%Y %H:%M:%S"`" "$text" "$(($space-${#text}))" "";
-    else
-      printf "#"' %s%*s: '"${2}"'\n' "$text" "$(($space-${#text}))" "";
-    fi
+    case ${text,,} in
+      -n)
+        text="$2"
+        printf "#"' %s%*s: '"`date "+%d/%m/%Y %H:%M:%S"`" "$text" "$(($space-${#text}))" "";
+        ;;
+      -d)
+        text="$3"
+        printf "#"' %s%*s: '"`date "+%d/%m/%Y %H:%M:%S" --date=@$2`" "$text" "$(($space-${#text}))" "";
+        ;;
+      *)
+        printf "#"' %s%*s: '"${2}"'\n' "$text" "$(($space-${#text}))" "";
+        ;;
+    esac
   fi
 }
 
@@ -297,21 +304,19 @@ debug "Generated exclude list: ${BACKUP_EXCL}\n#################################
 ########################################################################################################################################### Pre run Script
 
 if [ ! -z "${PRERUN}" ]; then
-  Step_Start=`date "+%s"`;
-  if [ $SHOWTEXT == "y" ]; then PRERUN_LOG=$(log -n "Pre-run script"); fi
+  PreRUN_Start=`date "+%s"`;
   runCMD "${PRERUN}"
-  if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); PRERUN_LOG=${PRERUN_LOG}$(finished_after $Step_End); fi
+  ((PreRUN_End=`date "+%s"`-PreRUN_Start));
 fi
 
 ########################################################################################################################################### Check path
 
 debug "Backup path/files: $BACKUP_PATH\n";
 
-BACKUP_PATH=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file/dir to backup?
+BACKUP_ARR=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file/dir to backup?
 BACKUP_PATH=""
 BACKUP_NOTEXISTS=""
-for tmpPath in "${BACKUP_PATH[@]}"; do
-echo file: $tmpPath
+for tmpPath in "${BACKUP_ARR[@]}"; do
   if [[ -e "$tmpPath" ]]; then                     # Is it exists?
     BACKUP_PATH+=" $tmpPath"
   else
@@ -319,6 +324,7 @@ echo file: $tmpPath
   fi
 done
 unset tmpPath
+unset BACKUP_ARR
 
 debug "Exists backup path/files: ${BACKUP_PATH}\nNOT exists backup path/files: ${BACKUP_NOTEXISTS}\n############################################################################\n";
 
@@ -334,12 +340,9 @@ if [ $LOCAL == "y" ]; then                                              # Backup
 
   if [ -n "${Local_Repo}" ]; then
     if [[ $BACKUP == "y" ]]; then
-      if [[ $SHOWTEXT == "y" ]]; then
-        Local_preCheck_Start=`date "+%s"`;
-        Local_preCheck="$(log -n "Local Pre-Check run")";
-      fi
+      if [[ $SHOWTEXT == "y" ]]; then Local_preCheck_Start=`date "+%s"`; fi
 
-      runCMD "$LOCAL_DIR_CHECK $Local_Repo'";                             # Directory is it exists?
+      runCMD "$LOCAL_DIR_CHECK $Local_Repo";                              # Directory is it exists?
       if [ $RUN_ERR -gt 0 ]; then                                         # Error, directory maybe it not exists!
         if [ $LCREATE_REPO  == "y" ]; then                                # Must I create the repository?
           if [ $LCREATE_REPO_DIR  == "y" ]; then                          # If not exist must I create it?
@@ -395,7 +398,6 @@ if [ $LOCAL == "y" ]; then                                              # Backup
 
       if [[ $SHOWTEXT == "y" ]]; then
         ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
-        Local_preCheck=$Local_preCheck$(finished_after $Local_preCheck_End;);
       fi
     else
       debug "Local backup skipped";
@@ -466,7 +468,6 @@ if [ $REMOTE == "y" ]; then                                             # Backup
     if [[ $BACKUP == "y" ]]; then
       if [[ $SHOWTEXT == "y" ]]; then
         Remote_preCheck_Start=`date "+%s"`;
-        Remote_preCheck=$(log -n "Remote Pre-Check run");
       fi
 
       if [ $Remote_SKIP == 0 ]; then
@@ -529,7 +530,6 @@ if [ $REMOTE == "y" ]; then                                             # Backup
 
       if [[ $SHOWTEXT == "y" ]]; then
         ((Remote_preCheck_End=`date "+%s"`-Remote_preCheck_Start));
-        Remote_preCheck=$Remote_preCheck$(finished_after $Remote_preCheck_End;);
       fi
     else
       debug "Remote backup skipped";
@@ -568,33 +568,41 @@ if [ $SHOWTEXT == "y" ]; then
   echo "#";
 fi
 
-if [ -n "${PRERUN_LOG}" ]; then echo $PRERUN_LOG; fi
+if [ ! -z "${PRERUN}" ]; then
+  log -d $PreRUN_Start "Pre-run script";
+  finished_after $PreRUN_End
+  echo "#";
+fi
 
 ################### Local
 
 if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
-  if [ $SHOWTEXT == "y" ]; then echo "${Local_preCheck}"; fi
+  if [ $SHOWTEXT == "y" ]; then
+    echo "# Local:";
+    log -d $Local_preCheck_Start "- Pre-Run script";
+    finished_after $Local_preCheck_End
+  fi
 
   if [[ $CHECK == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Check"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
     check_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $PRUNE == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Prune"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
     prune_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $COMPACT == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Compact"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
     compact_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $BACKUP == "y" ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Backup"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
 
     export BORG_PASSPHRASE=$Repo_PASSPHRASE; unset BORG_RSH;
     runCMD "borg create ${BORG_OPT} ${LOCAL_OPT} ${Local_Repo}::${Backup_UID} ${BACKUP_PATH} ${BACKUP_EXCL}"
@@ -608,19 +616,19 @@ if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
   fi
 
   if [[ $CHECK == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Check"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
     check_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $PRUNE == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Prune"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
     prune_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $COMPACT == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Local Compact"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
     compact_backup local
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
@@ -628,33 +636,37 @@ fi
 
 ###########################################################################################################################################
 
-if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ] && [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then echo "#";
+if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ] && [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then echo "#"; fi
 
 ################### Remote
 
 if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
-  if [ $SHOWTEXT == "y" ]; then echo "${Remote_preCheck}"; fi
+  if [ $SHOWTEXT == "y" ]; then
+    echo "# Remote:";
+    log -d $Remote_preCheck_Start "- Pre-Run script";
+    finished_after $Remote_preCheck_End
+  fi
 
   if [[ $PRUNE == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Prune"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
     prune_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $CHECK == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Check"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
     check_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $COMPACT == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Compact"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
     compact_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $BACKUP == "y" ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Backup"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
 
     export BORG_PASSPHRASE=$Repo_PASSPHRASE; export BORG_RSH=$Repo_RSH;
     runCMD "${SSHPASS}borg create ${BORG_OPT} ${REMOTE_OPT} ${Repo_SSH}::${Backup_UID} ${BACKUP_PATH} ${BACKUP_EXCL}"
@@ -668,19 +680,19 @@ if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
   fi
 
   if [[ $CHECK == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Check"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
     check_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $PRUNE == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Prune"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
     prune_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
 
   if [[ $COMPACT == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "Remote Compact"; fi
+    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
     compact_backup remote
     if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
   fi
@@ -694,14 +706,13 @@ unset BORG_PASSPHRASE
 if [ ! -z "${POSTRUN}" ]; then
   Step_Start=`date "+%s"`;
   if [ $SHOWTEXT == "y" ]; then
+    echo "#";
     log -n "Post-run script"
   fi
 
   runCMD "${POSTRUN}"
 
-  if [ $SHOWTEXT == "y" ]; then
-    ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End;
-  fi
+  if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
 fi
 
 if [ $SHOWTEXT == "y" ]; then
