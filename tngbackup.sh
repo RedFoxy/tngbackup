@@ -78,10 +78,10 @@ if [[ ! "$RCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then RCREATE_REPO_DIR="y"; else R
 
 if [[ $LOCAL != "y"  || ! "$LOCAL_REPO"  ]]; then LOCAL="n"; fi
 if [[ $REMOTE != "y" || ! "$REMOTE_REPO" ]]; then REMOTE="n"; fi
-if [[ $LOCAL == "n"  && $REMOTE == "n"   ]]; then error "There are no repository."; exit 1; fi
+if [[ $LOCAL == "n"  && $REMOTE == "n"   ]]; then error "There are no repository, please check LOCAL, LOCAL_REPO, REMOTE, REMOTE_REPO."; exit 1; fi
 
-if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$ ]];     then LOCAL_KEEP_LAST=0;     fi
-if [[ ! $LOCAL_KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_HOURLY=0;  fi
+if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$ ]];     then LOCAL_KEEP_LAST=0;     fi  
+if [[ ! $LOCAL_KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_HOURLY=0;   fi
 if [[ ! $LOCAL_KEEP_DAILY     =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_DAILY=0;    fi
 if [[ ! $LOCAL_KEEP_WEEKLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_WEEKLY=0;   fi
 if [[ ! $LOCAL_KEEP_MONTHLY   =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_MONTHLY=0;  fi
