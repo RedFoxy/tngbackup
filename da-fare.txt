@@ -7,3 +7,9 @@
 - Verificare che alla prima interazione di Borg non rimanga fermo al messaggio "Do you want to continue? [yN] " in caso inviare y
 
 - Aggiungere i comandi esterni da riga di comando
+
+- (Eugenio) creare alert per repository bloccato (info fallito)
+
+- (Eugenio) prevedere un file di log (da usare per la verifica del backup da parte di un AdS, campi da definire)
+  Esempio da elaborare:
+  DATA | TIPO DI OPERAZIONE (backup, check) | STATO
