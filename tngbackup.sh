@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER=0.7.8
+SVER=0.7.9
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -32,11 +32,6 @@ for bin in borg date; do
   fi
 done
 
-SSH_DIR_CHECK="stat -f '%HT'"       # *BSD
-#SSH_DIR_CHECK="stat --format=%F"   # Linux
-LOCAL_DIR_CHECK="stat --format=%F"  # Linux
-
-
 DEBUG=${DEBUG:-N};                                    # Attiva il debug
 DRYRUN=${DRYRUN:-N};                                  # Solo se debug attivo - Non eseguire i comandi
 BACKUP=${BACKUP:-Y};                                  # N = No backup     - Y = Run backup
@@ -55,6 +50,9 @@ SHOWTEXT=${SHOWTEXT:-N}                               # Show script log
 BORG_OPT=${BORG_OPT:-""};                             # Borg common extra options
 LOCAL_OPT=${LOCAL_OPT:-""};                           # Borg Local repository extra options
 REMOTE_OPT=${REMOTE_OPT:-""};                         # Borg Remote repository extra options
+
+LOCAL_DIR_CHECK=${LOCAL_DIR_CHECK:-"stat --format=%F"}; # Check if local path is a directoy
+SSH_DIR_CHECK=${SSH_DIR_CHECK:-"stat --format=%F"};     # Check if remote path is a directoy
 
 Mysql_OPT=${Mysql_OPT:-"--add-drop-database --add-drop-table --add-drop-trigger --add-locks --skip-extended-insert"};
 
@@ -80,21 +78,21 @@ if [[ $LOCAL != "y"  || ! "$LOCAL_REPO"  ]]; then LOCAL="n"; fi
 if [[ $REMOTE != "y" || ! "$REMOTE_REPO" ]]; then REMOTE="n"; fi
 if [[ $LOCAL == "n"  && $REMOTE == "n"   ]]; then error "There are no repository, please check LOCAL, LOCAL_REPO, REMOTE, REMOTE_REPO."; exit 1; fi
 
-if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$ ]];     then LOCAL_KEEP_LAST=0;     fi  
+if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$     ]]; then LOCAL_KEEP_LAST=0;     fi
 if [[ ! $LOCAL_KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_HOURLY=0;   fi
 if [[ ! $LOCAL_KEEP_DAILY     =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_DAILY=0;    fi
 if [[ ! $LOCAL_KEEP_WEEKLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_WEEKLY=0;   fi
 if [[ ! $LOCAL_KEEP_MONTHLY   =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_MONTHLY=0;  fi
 if [[ ! $LOCAL_KEEP_YEARLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_YEARLY=0;   fi
 
-if [[ ! $REMOTE_KEEP_LAST     =~ ^[0-9]{1,3}$ ]];     then REMOTE_KEEP_LAST=0;    fi
+if [[ ! $REMOTE_KEEP_LAST     =~ ^[0-9]{1,3}$     ]]; then REMOTE_KEEP_LAST=0;    fi
 if [[ ! $REMOTE_KEEP_HOURLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_HOURLY=0;  fi
 if [[ ! $REMOTE_KEEP_DAILY    =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_DAILY=0;   fi
 if [[ ! $REMOTE_KEEP_WEEKLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_WEEKLY=0;  fi
 if [[ ! $REMOTE_KEEP_MONTHLY  =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_MONTHLY=0; fi
 if [[ ! $REMOTE_KEEP_YEARLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_YEARLY=0;  fi
 
-if [[ ! $SSH_PORT             =~ ^[0-9]{1,5}$ ]];     then SSH_PORT=22;           else SSH_PORT=$SSH_PORT;               fi
+if [[ ! $SSH_PORT             =~ ^[0-9]{1,5}$     ]]; then SSH_PORT=22;           else SSH_PORT=$SSH_PORT;               fi
 
 case ${BORG_ENCRIPTION,,} in
   authenticated)
@@ -119,6 +117,69 @@ case ${BORG_ENCRIPTION,,} in
     BORG_ENCRIPTION="repokey-blake2";
     ;;
 esac
+
+if [ $DEBUG == "y" ]; then
+  echo "############################################################################";
+  echo "REPOSITORY           $REPOSITORY";
+  echo "REPO_PASSPHRASE      $REPO_PASSPHRASE";
+  echo "CHECK                $CHECK";
+  echo "COMPACT              $COMPACT";
+  echo "PRUNE                $PRUNE";
+  echo "SHOWTEXT             $SHOWTEXT";
+  echo "DEBUG                $DEBUG";
+  echo "DRYRUN               $DRYRUN";
+  echo "BORG_OPT             $BORG_OPT";
+  echo "BORG_ENCRIPTION      $BORG_ENCRIPTION";
+  echo "Mysql_OPT            $Mysql_OPT";
+
+  echo "--------------------------------------------";
+  echo "POSTRUN              $POSTRUN";
+  echo "PRERUN               $PRERUN";
+  echo "--------------------------------------------";
+
+  echo "SSH_CERT             $SSH_CERT";
+  echo "SSH_HOST             $SSH_HOST";
+  echo "SSH_PASS             $SSH_PASS";
+  echo "SSH_PORT             $SSH_PORT";
+  echo "SSH_USER             $SSH_USER";
+  echo "--------------------------------------------";
+
+  echo "BACKUP               $BACKUP";
+  echo "BACKUP_EXCL          $BACKUP_EXCL";
+  echo "BACKUP_PATH          $BACKUP_PATH";
+  echo "--------------------------------------------";
+
+  echo "LOCAL_REPO           $LOCAL_REPO";
+  echo "LCREATE_REPO         $LCREATE_REPO";
+  echo "LCREATE_REPO_DIR     $LCREATE_REPO_DIR";
+  echo "LOCAL_OPT            $LOCAL_OPT";
+  echo -e "\n"
+
+  echo "LOCAL                $LOCAL";
+  echo "LOCAL_DIR_CHECK      $LOCAL_DIR_CHECK";
+  echo "LOCAL_KEEP_DAILY     $LOCAL_KEEP_DAILY";
+  echo "LOCAL_KEEP_HOURLY    $LOCAL_KEEP_HOURLY";
+  echo "LOCAL_KEEP_LAST      $LOCAL_KEEP_LAST";
+  echo "LOCAL_KEEP_MONTHLY   $LOCAL_KEEP_MONTHLY";
+  echo "LOCAL_KEEP_WEEKLY    $LOCAL_KEEP_WEEKLY";
+  echo "LOCAL_KEEP_YEARLY    $LOCAL_KEEP_YEARLY";
+  echo "--------------------------------------------";
+
+  echo "REMOTE_REPO          $REMOTE_REPO";
+  echo "RCREATE_REPO         $RCREATE_REPO";
+  echo "RCREATE_REPO_DIR     $RCREATE_REPO_DIR";
+  echo "REMOTE_OPT           $REMOTE_OPT";
+  echo -e "\n"
+
+  echo "REMOTE               $REMOTE";
+  echo "REMOTE_KEEP_DAILY    $REMOTE_KEEP_DAILY";
+  echo "REMOTE_KEEP_HOURLY   $REMOTE_KEEP_HOURLY";
+  echo "REMOTE_KEEP_LAST     $REMOTE_KEEP_LAST";
+  echo "REMOTE_KEEP_MONTHLY  $REMOTE_KEEP_MONTHLY";
+  echo "REMOTE_KEEP_WEEKLY   $REMOTE_KEEP_WEEKLY";
+  echo "REMOTE_KEEP_YEARLY   $REMOTE_KEEP_YEARLY";
+  echo "############################################################################";
+fi
 
 if [[ $LOCAL == "n" && $REMOTE == "n" ]]; then
   echo "There are no active repositories.";
@@ -172,9 +233,9 @@ borg_prune() {
     if [[ "$PRUNE_OPT" == "" ]]; then
       error "No valid prune option, skip prune!";
     else
-      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
+      export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
       runCMD "borg prune ${PRUNE_OPT} ${LOCAL_REPO}"
-      unset BORG_PASSPHRASE; unset BORG_RSH;
+      unset BORG_PASSPHRASE;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to prune repository: "${LOCAL_REPO};
       fi
@@ -195,9 +256,9 @@ borg_prune() {
       if [[ "$PRUNE_OPT" == "" ]]; then
         error "No valid prune option, skip prune!";
       else
-        export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-        runCMD "${SSHPASS}borg prune ${PRUNE_OPT} ${Repo_SSH}"
-        unset BORG_PASSPHRASE;
+        export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+        runCMD "${SSHPASS}borg prune ${PRUNE_OPT}"
+        unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
         if [ $RUN_ERR -gt 0 ]; then
           error "Failed to prune repository: "${Repo_SSH};
         fi
@@ -210,17 +271,17 @@ borg_prune() {
 
 borg_compact() {
   if [ "$1" == "local" ]; then
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     runCMD "borg compact ${LOCAL_REPO}"
-    unset BORG_PASSPHRASE; unset BORG_RSH;
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to compact repository: "${LOCAL_REPO};
     fi
   else
     if [ "$1" == "remote" ]; then
-      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-      runCMD "${SSHPASS}borg compact ${Repo_SSH}"
-      unset BORG_PASSPHRASE; unset BORG_RSH;
+      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+      runCMD "${SSHPASS}borg compact"
+      unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to compact repository: "${Repo_SSH};
       fi
@@ -232,17 +293,17 @@ borg_compact() {
 
 borg_check() {
   if [ "$1" == "local" ]; then
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     runCMD "borg check --repository-only ${LOCAL_REPO}"
-    unset BORG_PASSPHRASE; unset BORG_RSH;
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to check repository: "${LOCAL_REPO};
     fi
   else
     if [ "$1" == "remote" ]; then
-      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-      runCMD "${SSHPASS}borg check --repository-only ${Repo_SSH}"
-      unset BORG_PASSPHRASE; unset BORG_RSH;
+      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+      runCMD "${SSHPASS}borg check --repository-only"
+      unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to check repository: "${Repo_SSH};
       fi
@@ -254,17 +315,17 @@ borg_check() {
 
 borg_info() {
   if [ "$1" == "local" ]; then
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     runCMD "borg info ${LOCAL_REPO}"
-    unset BORG_PASSPHRASE; unset BORG_RSH;
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to get info from repository: "${LOCAL_REPO};
     fi
   else
     if [ "$1" == "remote" ]; then
-      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-      runCMD "${SSHPASS}borg info ${Repo_SSH}"
-      unset BORG_PASSPHRASE; unset BORG_RSH;
+      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+      runCMD "${SSHPASS}borg info"
+      unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to get info from repository: "${Repo_SSH};
       fi
@@ -276,17 +337,17 @@ borg_info() {
 
 borg_init() {
   if [ "$1" == "local" ]; then
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     runCMD "borg init --encryption=${BORG_ENCRIPTION} ${LOCAL_REPO}"
-    unset BORG_PASSPHRASE; unset BORG_RSH;
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to initialize repository: "${LOCAL_REPO};
     fi
   else
     if [ "$1" == "remote" ]; then
-      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-      runCMD "${SSHPASS}borg init --encryption=${BORG_ENCRIPTION} ${Repo_SSH}"
-      unset BORG_PASSPHRASE; unset BORG_RSH;
+      export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+      runCMD "${SSHPASS}borg init --encryption=${BORG_ENCRIPTION}"
+      unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
       if [ $RUN_ERR -gt 0 ]; then
         error "Failed to initialize repository: "${Repo_SSH};
       fi
@@ -384,7 +445,7 @@ fi
 
 ########################################################################################################################################### Local
 
-if [ $LOCAL == "y" ]; then                                              # Backup on local repository?
+if [ $LOCAL == "y" ]; then                                                # Backup on local repository?
   debug "############################################################################\nBorg Local Backup";
 
   if [ -n "${LOCAL_REPO}" ]; then
@@ -469,16 +530,16 @@ fi
 if [ $REMOTE == "y" ]; then                                             # Backup on remote repository?
   debug "############################################################################\nBorg Remote Backup";
 
-  if [ -n "${REMOTE_REPO}" ]; then
-    if [ -n $SSH_USER ]; then                 # There is a username? If not exit...
-      if [ -n $SSH_HOST ]; then               # There is an hostname? If not exit...
-        if [ -n $SSH_CERT ]; then             # Must I use a certificate?
+  if [ -n ${REMOTE_REPO} ]; then
+    if [ -n ${SSH_USER} ]; then                 # There is a username? If not exit...
+      if [ -n ${SSH_HOST} ]; then               # There is an hostname? If not exit...
+        if [ -n ${SSH_CERT} ]; then             # Must I use a certificate?
           if [ -f "${SSH_CERT}" ]; then       # Is it exist and I can read it?
             if [ -r "${SSH_CERT}" ]; then     # Are you sure that I can read it?
               SSHPASS="";
               SSH_CMD="ssh -p $SSH_PORT -i $SSH_CERT $SSH_USER@$SSH_HOST";
               Repo_RSH='ssh -oBatchMode=yes -i '"${SSH_CERT}";
-              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT/$REMOTE_REPO";
+              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT$REMOTE_REPO";
             else
               error "Certificate not readable!";
               error "Skip remote backup...";
@@ -531,7 +592,7 @@ if [ $REMOTE == "y" ]; then                                             # Backup
       fi
 
       if [ $Remote_SKIP == 0 ]; then
-        runCMD "$SSH_CMD '$SSH_DIR_CHECK $REMOTE_REPO'";                # Directory is it exists?
+        runCMD "$SSH_CMD \"$SSH_DIR_CHECK $REMOTE_REPO\"";                # Directory is it exists?
         if [ $RUN_ERR -gt 0 ]; then                                     # Error, directory maybe it not exists!
           if [ $RCREATE_REPO  == "y" ]; then                            # Must I create the repository?
             if [ $RCREATE_REPO_DIR  == "y" ]; then                      # If not exist must I create it?
@@ -668,9 +729,9 @@ if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
   if [[ $BACKUP == "y" ]]; then
     if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
 
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     runCMD "borg create ${BORG_OPT} ${LOCAL_OPT} ${BORG_EXCLUDE} ${LOCAL_REPO}::${Backup_UID} ${BORG_PATH}"
-    unset BORG_PASSPHRASE;
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then # Fail to backup repository
       echo "Failed to create backup: "${LOCAL_REPO};
       echo "Message: ${RUN_OUT}";
@@ -733,9 +794,9 @@ if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
   if [[ $BACKUP == "y" ]]; then
     if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
 
-    export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH;
-    runCMD "${SSHPASS}borg create ${BORG_OPT} ${REMOTE_OPT} ${BORG_EXCLUDE} ${Repo_SSH}::${Backup_UID} ${BORG_PATH}"
-    unset BORG_PASSPHRASE; unset BORG_RSH;
+    export BORG_PASSPHRASE=$REPO_PASSPHRASE; export BORG_RSH=$Repo_RSH; export BORG_REPO=$Repo_SSH;
+    runCMD "${SSHPASS}borg create ${BORG_OPT} ${REMOTE_OPT} ${BORG_EXCLUDE} ::${Backup_UID} ${BORG_PATH}"
+    unset BORG_PASSPHRASE; unset BORG_RSH; unset BORG_REPO;
     if [ $RUN_ERR -gt 0 ]; then # Fail to backup repository
       echo "Failed to create backup: "${REMOTE_REPO};
       echo "Message: ${RUN_OUT}";
