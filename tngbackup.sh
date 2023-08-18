@@ -5,7 +5,7 @@ SDSC="The Next Gen Backup"
 set -o noglob
 error() {
   if [ -t 1 ]; then
-    echo "$(tput blink; tput setb 4; tput setaf 1; tput bold)$1$(tput sgr0)";
+    echo "$(tput setb 4; tput setaf 1; tput bold)$1$(tput sgr0)";
   else
     echo "$1";
   fi
@@ -405,8 +405,8 @@ borg_info() {
       loc_error=1;
       error "Invalid local/remote value, skip getting repository info! Actual value: $1";
       exit 1;
-    fi
-  fi
+      ;;
+  esac
 
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg info"
@@ -416,11 +416,9 @@ borg_info() {
 
       case ${1,,} in
         "local")
-          Local_SKIP=1;
-          ;;
+          Local_SKIP=1;;
         "remote")
-          Remote_SKIP=1;
-          ;;
+          Remote_SKIP=1;;
       esac
     fi
   fi
@@ -454,17 +452,15 @@ borg_init() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg init --encryption=${BORG_ENCRIPTION}"
     if [ $RUN_ERR -gt 0 ]; then
-      if [ $RUN_ERR ]
+#      if [ $RUN_ERR ]
       error "Failed to initialize $1 repository: "${BORG_REPO};
       error "Skip $1 backup...";
 
       case ${1,,} in
         "local")
-          Local_SKIP=1;
-          ;;
+          Local_SKIP=1;;
         "remote")
-          Remote_SKIP=1;
-          ;;
+          Remote_SKIP=1;;
       esac
     fi
   fi
