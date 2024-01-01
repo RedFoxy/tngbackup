@@ -1,14 +1,10 @@
 #!/bin/bash
-SVER=0.8.1
+SVER="0.8.5"
 SDSC="The Next Gen Backup"
 
 set -o noglob
 error() {
-  if [ -t 1 ]; then
-    echo "$(tput setb 4; tput setaf 1; tput bold)$1$(tput sgr0)";
-  else
-    echo "$1";
-  fi
+  echo "$1";
 }
 
 if [ ! -n "$REPO_PASSPHRASE" ]; then
@@ -212,10 +208,11 @@ runCMD() {
     RUN_ERR=0; RUN_OUT="";
     debug "\n----------------------------------------------------------------------------\n--- Command: ${1}"
     if [ ! $DRYRUN == "y" ]; then
-      RUN_OUT=$(eval ${1} 2>&1);
+      RUN_CMD=$1;
+      RUN_OUT=$(eval ${RUN_CMD} 2>&1);
       RUN_ERR=$?;
       if [[ $RUN_ERR > 0 ]]; then RUN_ERR=1; fi
-      debug "--- Error  : ${RUN_ERR}\n--- Output : \n${RUN_OUT}";
+      debug "--- Command: ${RUN_CMD}\n--- Error  : ${RUN_ERR}\n--- Output : \n${RUN_OUT}";
     fi
     debug "----------------------------------------------------------------------------";
   else
@@ -281,8 +278,11 @@ borg_prune() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg prune ${PRUNE_OPT}"
     if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to prune $1 repository: "${BORG_REPO};
+      error "Failed to prune $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -324,8 +324,11 @@ borg_compact() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg compact"
     if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to compact $1 repository: "${BORG_REPO};
+      error "Failed to compact $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -367,8 +370,11 @@ borg_check() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg check --repository-only"
     if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to check $1 repository: "${BORG_REPO};
+      error "Failed to check $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -411,8 +417,11 @@ borg_info() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg info"
     if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to get info from $1 repository: "${BORG_REPO};
+      error "Failed to get info from $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -453,8 +462,11 @@ borg_init() {
     runCMD "${olBorg}borg init --encryption=${BORG_ENCRIPTION}"
     if [ $RUN_ERR -gt 0 ]; then
 #      if [ $RUN_ERR ]
-      error "Failed to initialize $1 repository: "${BORG_REPO};
+      error "Failed to initialize $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -496,8 +508,11 @@ borg_create() {
   if [ $loc_error == 0 ]; then
     runCMD "${olBorg}borg create ${EXTRA_OPT} ${BORG_EXCLUDE} ::${Backup_UID} ${BORG_PATH}"
     if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to create $1 backup: "${BORG_REPO};
+      error "Failed to create $1 backup: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
       error "Skip $1 backup...";
+      error "";
 
       case ${1,,} in
         "local")
@@ -612,13 +627,12 @@ if [ $LOCAL == "y" ]; then                                                # Back
     if [[ $BACKUP == "y" ]]; then
       if [[ $SHOWTEXT == "y" ]]; then Local_preCheck_Start=`date "+%s"`; fi
 
-      runCMD "mkdir -p $LOCAL_REPO";                                # Create it!
-      borg_init local
+      runCMD "mkdir -p $LOCAL_REPO";
+      borg_info local
+      if [ ! -n "$RUN_OUT" ]; then
+        borg_init local
+      fi
 
-#      runCMD "$LOCAL_DIR_CHECK $LOCAL_REPO";                              # Directory is it exists?
-#      if [ $RUN_ERR -gt 0 ]; then                                         # Error, directory maybe it not exists!
-#        if [ $LCREATE_REPO  == "y" ]; then                                # Must I create the repository?
-#          if [ $LCREATE_REPO_DIR  == "y" ]; then                          # If not exist must I create it?
 #            runCMD "mkdir -p $LOCAL_REPO";                                # Create it!
 #            if [ $RUN_ERR -gt 0 ]; then                                   # Failed to create it...
 #              error "Failed to create directory: "${LOCAL_REPO};
@@ -626,7 +640,18 @@ if [ $LOCAL == "y" ]; then                                                # Back
 #              Local_SKIP=1;
 #            else
 #              borg_init local
+#              if [ $RUN_ERR -gt 0 ]; then                                 # Fail to create repository, I quit...
+#                error "Failed to create repository: "${LOCAL_REPO};
+#                error "Skip local backup...";
+#                Local_SKIP=1;
+#              fi
 #            fi
+
+
+#      runCMD "$LOCAL_DIR_CHECK $LOCAL_REPO";                              # Directory is it exists?
+#      if [ $RUN_ERR -gt 0 ]; then                                         # Error, directory maybe it not exists!
+#        if [ $LCREATE_REPO  == "y" ]; then                                # Must I create the repository?
+#          if [ $LCREATE_REPO_DIR  == "y" ]; then                          # If not exist must I create it?
 #          else                                                            # Must I not create it? So I quit....
 #            error 'Directory "'${LOCAL_REPO}'" does not exists.';
 #            error "Skip local backup...";
@@ -651,13 +676,23 @@ if [ $LOCAL == "y" ]; then                                                # Back
 #          else
 #            if [ ! -n "$RUN_OUT" ]; then                              # Directory is empty!
 #              borg_init local
+#              if [ $RUN_ERR -gt 0 ]; then                             # Fail to create repository
+#                error "Failed to create repository: "${LOCAL_REPO};
+#                error "Skip local backup...";
+#                Local_SKIP=1;
+#              fi
 #            else                                                      # Directory is not empty, is it a valid repository?
 #              borg_info local
+#              if [ $RUN_ERR -gt 0 ]; then                             # Repository not valid, I quit...
+#                error "Directory is not empty and it isn't a valid repository: "${LOCAL_REPO};
+#                error "Skip local backup...";
+#                Local_SKIP=1;
+#              fi
 #            fi
 #          fi
 #        fi
 #      fi
-#
+
       if [[ $SHOWTEXT == "y" ]]; then
         ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
       fi
@@ -740,47 +775,10 @@ if [ $REMOTE == "y" ]; then                                             # Backup
       fi
 
       if [ $Remote_SKIP == 0 ]; then
-        runCMD "$SSH_CMD \"$SSH_DIR_CHECK $REMOTE_REPO\"";                # Directory is it exists?
-        if [ $RUN_ERR -gt 0 ]; then                                     # Error, directory maybe it not exists!
-          if [ $RCREATE_REPO  == "y" ]; then                            # Must I create the repository?
-            if [ $RCREATE_REPO_DIR  == "y" ]; then                      # If not exist must I create it?
-              runCMD "$SSH_CMD 'mkdir -p $REMOTE_REPO'";                # Create it!
-              if [ $RUN_ERR -gt 0 ]; then                               # Failed to create it...
-                error "Failed to create remote directory: "${REMOTE_REPO};
-                error "Skip remote backup...";
-                Remote_SKIP=1;
-              else
-                borg_init remote
-              fi
-            else                                                        # Must I not create it? So I quit....
-              error 'Remote directory "'${REMOTE_REPO}'" does not exists.';
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            fi
-          else
-            error 'Remote repository "'${REMOTE_REPO}'" does not exists.';
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          fi
-        else                                                            # It exists but isn't a directory or a symbolic link to a directory
-          if [[ "${RUN_OUT,,}" != "directory" ]] && [[ "${RUN_OUT,,}" != "symbolic link" ]]; then
-            error ${REMOTE_REPO}" already exists but it isn't a directory.";
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          else                                                          # Directory exists
-            runCMD "$SSH_CMD 'ls -A $REMOTE_REPO'";
-            if [ $RUN_ERR -gt 0 ]; then
-              error "Failed to read remote directory: "${REMOTE_REPO};
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            else
-              if [ ! -n "$RUN_OUT" ]; then                              # Directory is empty!
-                borg_init remote
-              else                                                      # Directory is not empty, is it a valid repository?
-                borg_info remote
-              fi
-            fi
-          fi
+        runCMD "$SSH_CMD 'mkdir -p $REMOTE_REPO'";
+        borg_info remote
+        if [ ! -n "$RUN_OUT" ]; then
+          borg_init remote
         fi
       fi
 
@@ -966,4 +964,3 @@ if [ $SHOWTEXT == "y" ]; then
   ((Backup_End=`date "+%s"`-Backup_Start));
   finished_after $Backup_End;
   echo "############################################################################";
-fi

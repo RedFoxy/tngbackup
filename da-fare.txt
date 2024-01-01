@@ -13,3 +13,4 @@
 - (Eugenio) prevedere un file di log (da usare per la verifica del backup da parte di un AdS, campi da definire)
   Esempio da elaborare:
   DATA | TIPO DI OPERAZIONE (backup, check) | STATO
+- Verificare il comportamento in caso di spostamento della directory di backup (vedi cache di borg)
