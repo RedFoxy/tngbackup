@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER="0.8.5"
+SVER="0.8.6"
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -714,6 +714,9 @@ if [ $REMOTE == "y" ]; then                                             # Backup
   debug "############################################################################\nBorg Remote Backup";
 
   if [ -n ${REMOTE_REPO} ]; then
+    if [[ ! $a == "/*" ]]; then
+      REMOTE_REPO="/"${REMOTE_REPO}
+    fi
     if [ -n ${SSH_USER} ]; then                 # There is a username? If not exit...
       if [ -n ${SSH_HOST} ]; then               # There is an hostname? If not exit...
         if [ -n ${SSH_CERT} ]; then             # Must I use a certificate?
@@ -964,3 +967,4 @@ if [ $SHOWTEXT == "y" ]; then
   ((Backup_End=`date "+%s"`-Backup_Start));
   finished_after $Backup_End;
   echo "############################################################################";
+fi
