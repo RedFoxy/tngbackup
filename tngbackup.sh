@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER="0.8.6"
+SVER="0.8.7"
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -193,16 +193,16 @@ Remote_SKIP=0;
 RUN_ERR=0
 RUN_OUT=""
 
-########################################################################################################################################### Functions
+############################################################################################################### Functions
 
-############################################################################################################################## Debug
+############################################################################################################### Debug
 debug() {
   if [ -n "$1" ] && [ $DEBUG == "y" ]; then
     echo -e "$1";
   fi
 }
 
-############################################################################################################################## Run command
+############################################################################################################### Run command
 runCMD() {
   if [ -n "$1" ]; then
     RUN_ERR=0; RUN_OUT="";
@@ -212,7 +212,7 @@ runCMD() {
       RUN_OUT=$(eval ${RUN_CMD} 2>&1);
       RUN_ERR=$?;
       if [[ $RUN_ERR > 0 ]]; then RUN_ERR=1; fi
-      debug "--- Command: ${RUN_CMD}\n--- Error  : ${RUN_ERR}\n--- Output : \n${RUN_OUT}";
+      debug "--- Error  : ${RUN_ERR}\n--- Output : \n${RUN_OUT}";
     fi
     debug "----------------------------------------------------------------------------";
   else
@@ -221,10 +221,10 @@ runCMD() {
   fi
 }
 
-############################################################################################################################## Borg - Prune
+############################################################################################################### Borg - Prune
 borg_prune() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   local PRUNE_OPT=""
 
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
@@ -266,7 +266,7 @@ borg_prune() {
       else
         export BORG_RSH=${Repo_RSH};
         export BORG_REPO=$Repo_SSH;
-        olBorg=${SSHPASS}
+        preBorg=${SSHPASS}
       fi
       ;;
     *)
@@ -276,7 +276,7 @@ borg_prune() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg prune ${PRUNE_OPT}"
+    runCMD "${preBorg}borg prune ${PRUNE_OPT}"
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to prune $1 repository: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
@@ -300,10 +300,10 @@ borg_prune() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Borg - Compact
+############################################################################################################### Borg - Compact
 borg_compact() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
 
   case ${1,,} in
@@ -322,7 +322,7 @@ borg_compact() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg compact"
+    runCMD "${preBorg}borg compact"
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to compact $1 repository: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
@@ -346,10 +346,10 @@ borg_compact() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Borg - Check
+############################################################################################################### Borg - Check
 borg_check() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
 
   case ${1,,} in
@@ -368,7 +368,7 @@ borg_check() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg check --repository-only"
+    runCMD "${preBorg}borg check --repository-only"
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to check $1 repository: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
@@ -392,10 +392,10 @@ borg_check() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Borg - Info
+############################################################################################################### Borg - Info
 borg_info() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
 
   case ${1,,} in
@@ -415,7 +415,7 @@ borg_info() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg info"
+    runCMD "${preBorg}borg info"
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to get info from $1 repository: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
@@ -437,10 +437,10 @@ borg_info() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Borg - Init
+############################################################################################################### Borg - Init
 borg_init() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
 
   case ${1,,} in
@@ -459,9 +459,8 @@ borg_init() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg init --encryption=${BORG_ENCRIPTION}"
+    runCMD "${preBorg}borg init --encryption=${BORG_ENCRIPTION}"
     if [ $RUN_ERR -gt 0 ]; then
-#      if [ $RUN_ERR ]
       error "Failed to initialize $1 repository: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
       error "Message: ${RUN_OUT}";
@@ -482,10 +481,10 @@ borg_init() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Borg - Create
+############################################################################################################### Borg - Create
 borg_create() {
   local loc_error=0;
-  local olBorg="";
+  local preBorg="";
   export BORG_PASSPHRASE=$REPO_PASSPHRASE;
 
   case ${1,,} in
@@ -506,7 +505,7 @@ borg_create() {
   esac
 
   if [ $loc_error == 0 ]; then
-    runCMD "${olBorg}borg create ${EXTRA_OPT} ${BORG_EXCLUDE} ::${Backup_UID} ${BORG_PATH}"
+    runCMD "${preBorg}borg create ${EXTRA_OPT} ${BORG_EXCLUDE} ::${Backup_UID} ${BORG_PATH}"
     if [ $RUN_ERR -gt 0 ]; then
       error "Failed to create $1 backup: ${BORG_REPO}";
       error "Command: ${RUN_CMD}";
@@ -530,7 +529,7 @@ borg_create() {
   unset BORG_REPO;
 }
 
-############################################################################################################################## Finisched after
+############################################################################################################### Finisched after
 finished_after() {
   echo -n " - Finished after: ";
   if [ -n "$1" ]; then
@@ -548,7 +547,7 @@ finished_after() {
   fi
 }
 
-############################################################################################################################## Log
+############################################################################################################### Log
 log() {
   if [ -n "$1" ]; then
     local text=$1;
@@ -570,7 +569,7 @@ log() {
   fi
 }
 
-########################################################################################################################################### Exclude list
+############################################################################################################### Exclude list
 debug "############################################################################ EXCLUDE LIST\n";
 debug "Backup exclude: ${BACKUP_EXCL}\n";
 
@@ -583,7 +582,7 @@ unset tmpEXCL
 unset EXCLUDE_LIST
 
 debug "Generated exclude list: ${BORG_EXCLUDE}\n";
-########################################################################################################################################### Pre run Script
+############################################################################################################### Pre run Script
 
 if [ ! -z "${PRERUN}" ]; then
   debug "############################################################################ PRE-RUN\n";
@@ -592,7 +591,7 @@ if [ ! -z "${PRERUN}" ]; then
   ((PreRUN_End=`date "+%s"`-PreRUN_Start));
 fi
 
-########################################################################################################################################### Check backup path
+############################################################################################################### Check backup path
 
 debug "############################################################################ BACKUP PATH\n";
 debug "Backup path/files: $BACKUP_PATH\n";
@@ -601,7 +600,7 @@ BACKUP_ARR=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file
 BORG_PATH=""
 BACKUP_NOTEXISTS=""
 for tmpPath in "${BACKUP_ARR[@]}"; do
-  if [[ -e "$tmpPath" ]]; then                     # Is it exists?
+  if [[ -e "$tmpPath" ]]; then                    # Is it exists?
     BORG_PATH+=" $tmpPath"
   else
     BACKUP_NOTEXISTS+=" $tmpPath"
@@ -618,9 +617,9 @@ if [ "${BORG_PATH}" == "" ]; then
   exit 1;
 fi
 
-########################################################################################################################################### Local
+############################################################################################################### Local
 
-if [ $LOCAL == "y" ]; then                                                # Backup on local repository?
+if [ $LOCAL == "y" ]; then                        # Backup on local repository?
   debug "############################################################################\nBorg Local Backup";
 
   if [ -n "${LOCAL_REPO}" ]; then
@@ -632,66 +631,6 @@ if [ $LOCAL == "y" ]; then                                                # Back
       if [ ! -n "$RUN_OUT" ]; then
         borg_init local
       fi
-
-#            runCMD "mkdir -p $LOCAL_REPO";                                # Create it!
-#            if [ $RUN_ERR -gt 0 ]; then                                   # Failed to create it...
-#              error "Failed to create directory: "${LOCAL_REPO};
-#              error "Skip local backup...";
-#              Local_SKIP=1;
-#            else
-#              borg_init local
-#              if [ $RUN_ERR -gt 0 ]; then                                 # Fail to create repository, I quit...
-#                error "Failed to create repository: "${LOCAL_REPO};
-#                error "Skip local backup...";
-#                Local_SKIP=1;
-#              fi
-#            fi
-
-
-#      runCMD "$LOCAL_DIR_CHECK $LOCAL_REPO";                              # Directory is it exists?
-#      if [ $RUN_ERR -gt 0 ]; then                                         # Error, directory maybe it not exists!
-#        if [ $LCREATE_REPO  == "y" ]; then                                # Must I create the repository?
-#          if [ $LCREATE_REPO_DIR  == "y" ]; then                          # If not exist must I create it?
-#          else                                                            # Must I not create it? So I quit....
-#            error 'Directory "'${LOCAL_REPO}'" does not exists.';
-#            error "Skip local backup...";
-#            Local_SKIP=1;
-#          fi
-#        else
-#          error 'Repository "'${LOCAL_REPO}'" does not exists.';
-#          error "Skip local backup...";
-#          Local_SKIP=1;
-#        fi
-#      else                                                                # It exists but isn't a directory or a symbolic link to a directory
-#        if [[ "${RUN_OUT,,}" != "directory" ]] && [[ "${RUN_OUT,,}" != "symbolic link" ]]; then
-#          error ${LOCAL_REPO}" already exists but it isn't a directory.";
-#          error "Skip local backup...";
-#          Local_SKIP=1;
-#        else                                                              # Directory exists
-#          runCMD "ls -A $LOCAL_REPO";
-#          if [ $RUN_ERR -gt 0 ]; then
-#            error "Failed to read directory: "${LOCAL_REPO};
-#            error "Skip local backup...";
-#            Local_SKIP=1;
-#          else
-#            if [ ! -n "$RUN_OUT" ]; then                              # Directory is empty!
-#              borg_init local
-#              if [ $RUN_ERR -gt 0 ]; then                             # Fail to create repository
-#                error "Failed to create repository: "${LOCAL_REPO};
-#                error "Skip local backup...";
-#                Local_SKIP=1;
-#              fi
-#            else                                                      # Directory is not empty, is it a valid repository?
-#              borg_info local
-#              if [ $RUN_ERR -gt 0 ]; then                             # Repository not valid, I quit...
-#                error "Directory is not empty and it isn't a valid repository: "${LOCAL_REPO};
-#                error "Skip local backup...";
-#                Local_SKIP=1;
-#              fi
-#            fi
-#          fi
-#        fi
-#      fi
 
       if [[ $SHOWTEXT == "y" ]]; then
         ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
@@ -708,20 +647,20 @@ else
   Local_SKIP=1;
 fi
 
-########################################################################################################################################### Remote
+############################################################################################################### Remote
 
-if [ $REMOTE == "y" ]; then                                             # Backup on remote repository?
+if [ $REMOTE == "y" ]; then                       # Backup on remote repository?
   debug "############################################################################\nBorg Remote Backup";
 
   if [ -n ${REMOTE_REPO} ]; then
     if [[ ! $a == "/*" ]]; then
       REMOTE_REPO="/"${REMOTE_REPO}
     fi
-    if [ -n ${SSH_USER} ]; then                 # There is a username? If not exit...
-      if [ -n ${SSH_HOST} ]; then               # There is an hostname? If not exit...
-        if [ -n ${SSH_CERT} ]; then             # Must I use a certificate?
-          if [ -f "${SSH_CERT}" ]; then       # Is it exist and I can read it?
-            if [ -r "${SSH_CERT}" ]; then     # Are you sure that I can read it?
+    if [ -n ${SSH_USER} ]; then                   # There is a username? If not exit...
+      if [ -n ${SSH_HOST} ]; then                 # There is an hostname? If not exit...
+        if [ -n ${SSH_CERT} ]; then               # Must I use a certificate?
+          if [ -f "${SSH_CERT}" ]; then           # Is it exist and I can read it?
+            if [ -r "${SSH_CERT}" ]; then         # Are you sure that I can read it?
               SSHPASS="";
               SSH_CMD="ssh -p $SSH_PORT -i $SSH_CERT $SSH_USER@$SSH_HOST";
               Repo_RSH="ssh "${SSH_OPT}" -i "${SSH_CERT};
@@ -736,8 +675,8 @@ if [ $REMOTE == "y" ]; then                                             # Backup
             error "Skip remote backup...";
             Remote_SKIP=1;
           fi
-        else                                  # Password is the way!
-          if [ -n $SSH_PASS ]; then           # Have I a password?
+        else                                      # Password is the way!
+          if [ -n $SSH_PASS ]; then               # Have I a password?
             if [ -z $(command -v sshpass) ]; then
               error "Cannot find sshpass, please install it!"
               error "Skip remote backup...";
@@ -800,14 +739,14 @@ else
   Remote_SKIP=1;
 fi
 
-###########################################################################################################################################
-###########################################################################################################################################
+###############################################################################################################
+###############################################################################################################
 if [[ $Local_SKIP > 0 ]] && [[ $Remote_SKIP > 0 ]]; then
   echo "Too much errors, unable to run backup."
   exit 1;
 fi
-###########################################################################################################################################
-###########################################################################################################################################
+###############################################################################################################
+###############################################################################################################
 
 if [ $SHOWTEXT == "y" ]; then
   echo "############################################################################";
@@ -887,7 +826,7 @@ if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
   fi
 fi
 
-###########################################################################################################################################
+###############################################################################################################
 
 if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ] && [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then echo "#"; fi
 
