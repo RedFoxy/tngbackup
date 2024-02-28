@@ -36,29 +36,22 @@ for bin in borg date; do
   fi
 done
 
-DEBUG=${DEBUG:-N};                                      # Attiva il debug
-DRYRUN=${DRYRUN:-N};                                    # Solo se debug attivo - Non eseguire i comandi
-BACKUP=${BACKUP:-Y};                                    # N = No backup     - Y = Run backup
-CHECK=${CHECK:-0};                                      # 0 = No check repo - 1 = Check   before backup - 2 = Check   after backup
-PRUNE=${PRUNE:-0};                                      # 0 = No prune      - 1 = Prune   before backup - 2 = Prune   after backup
-COMPACT=${COMPACT:-0};                                  # 0 = No compact    - 1 = Compact before backup - 2 = Compact after backup
+DEBUG=${DEBUG:-N};                                    # Attiva il debug
+DRYRUN=${DRYRUN:-N};                                  # Solo se debug attivo - Non eseguire i comandi
+SHOWTEXT=${SHOWTEXT:-N}                               # Show script log
 
-LOCAL=${LOCAL:-N};                                      # Makes Local backup Yes/No
-REMOTE=${REMOTE:-N};                                    # Makes Remote backup Yes/No
-LCREATE_REPO=${LCREATE_REPO:-Y};                        # Create Local repository if not exists
-LCREATE_REPO_DIR=${LCREATE_REPO_DIR:-Y};                # Create Local repository directory if not exists
-RCREATE_REPO=${RCREATE_REPO:-Y};                        # Create Remote repository if not exists
-RCREATE_REPO_DIR=${RCREATE_REPO_DIR:-Y};                # Create Remote repository directory if not exists
-BORG_ENCRIPTION=${BORG_ENCRIPTION:-"repokey-blake2"};   # Borg encription
-SHOWTEXT=${SHOWTEXT:-N}                                 # Show script log
-BORG_OPT=${BORG_OPT:-""};                               # Borg common extra options
-LOCAL_OPT=${LOCAL_OPT:-""};                             # Borg Local repository extra options
-REMOTE_OPT=${REMOTE_OPT:-""};                           # Borg Remote repository extra options
+BACKUP=${BACKUP:-Y};                                  # N = No backup     - Y = Run backup
+CHECK=${CHECK:-0};                                    # 0 = No check repo - 1 = Check   before backup - 2 = Check   after backup
+PRUNE=${PRUNE:-0};                                    # 0 = No prune      - 1 = Prune   before backup - 2 = Prune   after backup
+COMPACT=${COMPACT:-0};                                # 0 = No compact    - 1 = Compact before backup - 2 = Compact after backup
 
-SSH_OPT=${SSH_OPT:-"-o BatchMode=yes -o StrictHostKeyChecking=accept-new"};
+CREATE_REPO=${CREATE_REPO:-Y};                        # Create Local repository if not exists
+CREATE_REPO_DIR=${CREATE_REPO_DIR:-Y};                # Create Local repository directory if not exists
+BORG_OPT=${BORG_OPT:-""};                             # Borg common extra options
+BORG_ENCRIPTION=${BORG_ENCRIPTION:-"repokey-blake2"}; # Borg encription
 
-LOCAL_DIR_CHECK=${LOCAL_DIR_CHECK:-"stat --format=%F"}; # Check if local path is a directoy
-SSH_DIR_CHECK=${SSH_DIR_CHECK:-"stat --format=%F"};     # Check if remote path is a directoy
+SSH_OPT=${SSH_OPT:-"-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5"};
+DIR_CHECK=${DIR_CHECK:-"stat --format=%F"};           # Check if local path is a directoy
 
 Mysql_OPT=${Mysql_OPT:-"--add-drop-database --add-drop-table --add-drop-trigger --add-locks --skip-extended-insert"};
 
@@ -73,30 +66,15 @@ if [[ ! $CHECK                 =~ ^[0-2]$ ]];  then CHECK=0;              else C
 if [[ ! $PRUNE                 =~ ^[0-2]$ ]];  then PRUNE=0;              else PRUNE=$PRUNE;                             fi
 if [[ ! $COMPACT               =~ ^[0-2]$ ]];  then COMPACT=0;            else COMPACT=$COMPACT;                         fi
 
-if [[ ! "$LOCAL"               =~ ^[ynYN]$ ]]; then LOCAL="n";            else LOCAL="${LOCAL,,}";                       fi
-if [[ ! "$REMOTE"              =~ ^[ynYN]$ ]]; then REMOTE="n";           else REMOTE="${REMOTE,,}";                     fi
-if [[ ! "$LCREATE_REPO"        =~ ^[ynYN]$ ]]; then LCREATE_REPO="y";     else LCREATE_REPO="${LCREATE_REPO,,}";         fi
-if [[ ! "$LCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then LCREATE_REPO_DIR="y"; else LCREATE_REPO_DIR="${LCREATE_REPO_DIR,,}"; fi
-if [[ ! "$RCREATE_REPO"        =~ ^[ynYN]$ ]]; then RCREATE_REPO="y";     else RCREATE_REPO="${RCREATE_REPO,,}";         fi
-if [[ ! "$RCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then RCREATE_REPO_DIR="y"; else RCREATE_REPO_DIR="${RCREATE_REPO_DIR,,}"; fi
+if [[ ! "$CREATE_REPO"        =~ ^[ynYN]$ ]]; then CREATE_REPO="y";     else CREATE_REPO="${CREATE_REPO,,}";         fi
+if [[ ! "$CREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then CREATE_REPO_DIR="y"; else CREATE_REPO_DIR="${CREATE_REPO_DIR,,}"; fi
 
-if [[ $LOCAL != "y"  || ! "$LOCAL_REPO"  ]]; then LOCAL="n"; fi
-if [[ $REMOTE != "y" || ! "$REMOTE_REPO" ]]; then REMOTE="n"; fi
-if [[ $LOCAL == "n"  && $REMOTE == "n"   ]]; then error "There are no repository, please check LOCAL, LOCAL_REPO, REMOTE, REMOTE_REPO."; exit 1; fi
-
-if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$     ]]; then LOCAL_KEEP_LAST=0;     fi
-if [[ ! $LOCAL_KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_HOURLY=0;   fi
-if [[ ! $LOCAL_KEEP_DAILY     =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_DAILY=0;    fi
-if [[ ! $LOCAL_KEEP_WEEKLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_WEEKLY=0;   fi
-if [[ ! $LOCAL_KEEP_MONTHLY   =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_MONTHLY=0;  fi
-if [[ ! $LOCAL_KEEP_YEARLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_YEARLY=0;   fi
-
-if [[ ! $REMOTE_KEEP_LAST     =~ ^[0-9]{1,3}$     ]]; then REMOTE_KEEP_LAST=0;    fi
-if [[ ! $REMOTE_KEEP_HOURLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_HOURLY=0;  fi
-if [[ ! $REMOTE_KEEP_DAILY    =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_DAILY=0;   fi
-if [[ ! $REMOTE_KEEP_WEEKLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_WEEKLY=0;  fi
-if [[ ! $REMOTE_KEEP_MONTHLY  =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_MONTHLY=0; fi
-if [[ ! $REMOTE_KEEP_YEARLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_YEARLY=0;  fi
+if [[ ! $KEEP_LAST      =~ ^[0-9]{1,3}$     ]]; then KEEP_LAST=0;     fi
+if [[ ! $KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then KEEP_HOURLY=0;   fi
+if [[ ! $KEEP_DAILY     =~ ^(-|)[0-9]{1,3}$ ]]; then KEEP_DAILY=0;    fi
+if [[ ! $KEEP_WEEKLY    =~ ^(-|)[0-9]{1,3}$ ]]; then KEEP_WEEKLY=0;   fi
+if [[ ! $KEEP_MONTHLY   =~ ^(-|)[0-9]{1,3}$ ]]; then KEEP_MONTHLY=0;  fi
+if [[ ! $KEEP_YEARLY    =~ ^(-|)[0-9]{1,3}$ ]]; then KEEP_YEARLY=0;   fi
 
 if [[ ! $SSH_PORT             =~ ^[0-9]{1,5}$     ]]; then SSH_PORT=22;           else SSH_PORT=$SSH_PORT;               fi
 
@@ -143,11 +121,12 @@ if [ $DEBUG == "y" ]; then
   echo "PRERUN               $PRERUN";
   echo "--------------------------------------------";
 
-  echo "SSH_CERT             $SSH_CERT";
   echo "SSH_HOST             $SSH_HOST";
+  echo "SSH_CERT             $SSH_CERT";
   echo "SSH_PASS             $SSH_PASS";
   echo "SSH_PORT             $SSH_PORT";
   echo "SSH_USER             $SSH_USER";
+  echo "SSH_OPT              $SSH_OPT";
   echo "--------------------------------------------";
 
   echo "BACKUP               $BACKUP";
@@ -155,47 +134,25 @@ if [ $DEBUG == "y" ]; then
   echo "BACKUP_PATH          $BACKUP_PATH";
   echo "--------------------------------------------";
 
-  echo "LOCAL_REPO           $LOCAL_REPO";
-  echo "LCREATE_REPO         $LCREATE_REPO";
-  echo "LCREATE_REPO_DIR     $LCREATE_REPO_DIR";
-  echo "LOCAL_OPT            $LOCAL_OPT";
+  echo "CREATE_REPO          $CREATE_REPO";
+  echo "CREATE_REPO_DIR      $CREATE_REPO_DIR";
   echo -e "\n"
 
-  echo "LOCAL                $LOCAL";
-  echo "LOCAL_DIR_CHECK      $LOCAL_DIR_CHECK";
-  echo "LOCAL_KEEP_DAILY     $LOCAL_KEEP_DAILY";
-  echo "LOCAL_KEEP_HOURLY    $LOCAL_KEEP_HOURLY";
-  echo "LOCAL_KEEP_LAST      $LOCAL_KEEP_LAST";
-  echo "LOCAL_KEEP_MONTHLY   $LOCAL_KEEP_MONTHLY";
-  echo "LOCAL_KEEP_WEEKLY    $LOCAL_KEEP_WEEKLY";
-  echo "LOCAL_KEEP_YEARLY    $LOCAL_KEEP_YEARLY";
+  echo "DIR_CHECK            $DIR_CHECK";
+  echo "KEEP_DAILY           $KEEP_DAILY";
+  echo "KEEP_HOURLY          $KEEP_HOURLY";
+  echo "KEEP_LAST            $KEEP_LAST";
+  echo "KEEP_MONTHLY         $KEEP_MONTHLY";
+  echo "KEEP_WEEKLY          $KEEP_WEEKLY";
+  echo "KEEP_YEARLY          $KEEP_YEARLY";
   echo "--------------------------------------------";
 
-  echo "REMOTE_REPO          $REMOTE_REPO";
-  echo "RCREATE_REPO         $RCREATE_REPO";
-  echo "RCREATE_REPO_DIR     $RCREATE_REPO_DIR";
-  echo "REMOTE_OPT           $REMOTE_OPT";
   echo -e "\n"
-
-  echo "REMOTE               $REMOTE";
-  echo "REMOTE_KEEP_DAILY    $REMOTE_KEEP_DAILY";
-  echo "REMOTE_KEEP_HOURLY   $REMOTE_KEEP_HOURLY";
-  echo "REMOTE_KEEP_LAST     $REMOTE_KEEP_LAST";
-  echo "REMOTE_KEEP_MONTHLY  $REMOTE_KEEP_MONTHLY";
-  echo "REMOTE_KEEP_WEEKLY   $REMOTE_KEEP_WEEKLY";
-  echo "REMOTE_KEEP_YEARLY   $REMOTE_KEEP_YEARLY";
   echo "############################################################################";
-fi
-
-if [[ $LOCAL == "n" && $REMOTE == "n" ]]; then
-  echo "There are no active repositories.";
-  exit 1;
 fi
 
 Backup_Start=`date "+%s"`;
 Backup_UID=`date "+%Y-%m-%d_%H-%M-%S"`;
-Local_SKIP=0;
-Remote_SKIP=0;
 RUN_ERR=0
 RUN_OUT=""
 
@@ -250,33 +207,95 @@ fi
 
 ############################################################################################################### Local
 
-if [ $LOCAL == "y" ]; then                        # Backup on local repository?
-  debug "############################################################################\nBorg Local Backup";
+debug "############################################################################\nBorg Local Backup";
 
-  if [ -n "${LOCAL_REPO}" ]; then
-    if [[ $BACKUP == "y" ]]; then
-      if [[ $SHOWTEXT == "y" ]]; then Local_preCheck_Start=`date "+%s"`; fi
+if [[ $BACKUP == "y" ]]; then
+  if [[ $SHOWTEXT == "y" ]]; then Local_preCheck_Start=`date "+%s"`; fi
 
-      runCMD "mkdir -p $LOCAL_REPO";
-      borg_info local
-      if [ ! -n "$RUN_OUT" ]; then
-        borg_init local
-      fi
+  runCMD "mkdir -p $LOCAL_REPO";
+  borg_info local
+  if [ ! -n "$RUN_OUT" ]; then
+    borg_init local
+  fi
 
-      if [[ $SHOWTEXT == "y" ]]; then
-        ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
-      fi
-    else
-      debug "Local backup skipped";
-    fi
-  else
-    debug "LOCAL_REPO is empty: "${LOCAL_REPO};
-    error "Skip local backup...";
-    Local_SKIP=1;
+  if [[ $SHOWTEXT == "y" ]]; then
+    ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
   fi
 else
-  Local_SKIP=1;
+  debug "Local backup skipped";
 fi
+
+check_re() {
+  SSHPASS=""
+  PRESSH=""
+  POSTSSH=""
+
+  if [ -n "${SSH_HOST}" ]; then               # There is an hostname? Than it's a remote backup!
+    if [ -n "${SSH_USER}" ]; then             # Check if there is an username
+      SSH="${SSH_USER}@${SSH_HOST}"
+
+      if [ -n "${SSH_CERT}" ]; then           # There is a certificate
+        if [ -f "${SSH_CERT}" ] && [ -r "${SSH_CERT}" ]; then
+          echo "Si esiste e lo leggo"
+        else
+          error "Certificate ${SSH_CERT} not found or not readable!"
+          Remote_SKIP=1
+        fi
+      else                                      # No certificate? Than Password is the way!
+        if [ -n $SSH_PASS ]; then               # Have I a password?
+          if [ -z $(command -v sshpass) ]; then
+            error "Cannot find sshpass, please install it!"
+            Remote_SKIP=1
+          else
+            PRESSH="sshpass -p ${SSH_PASS} "
+          fi
+        else
+          error "SSH Password not provided!"
+          Remote_SKIP=1
+        fi
+      fi
+    else
+      error "SSH Username not provided!"
+      Remote_SKIP=1
+    fi
+
+status=$(ssh -o BatchMode=yes -o ConnectTimeout=5 user@host echo ok 2>&1)
+
+ssh -q u284722-sub1@u284722-sub1.your-storagebox.de -p 23 -i /root/.ssh/hetzner_backup exit
+root@backup:/opt# echo $?
+0
+255 -> fail
+
+
+    SSH_CMD="ssh -p $SSH_PORT  $SSH"
+    Repo_RSH="ssh ${SSH_OPT} -i ${SSH_CERT}"
+    Repo_SSH="ssh://$SSH:$SSH_PORT$REMOTE_REPO"
+
+    SSHPASS="";
+    SSH_CMD="ssh -p $SSH_PORT -i $SSH_CERT $SSH_USER@$SSH_HOST";
+    Repo_RSH="ssh "${SSH_OPT}" -i "${SSH_CERT};
+    Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT$REMOTE_REPO";
+
+# SSH     -> user@hostname
+# PRESSH  -> solo in caso di password
+# POSTSSH -> -p $SSH_PORT -i ${SSH_CERT}
+
+    SSH_CMD="${PRESSH}ssh ${POSTSSH} ${SSH}"
+    Repo_RSH="ssh ${SSH_OPT}"
+    Repo_SSH="ssh://$SSH:$SSH_PORT/$REMOTE_REPO"
+
+
+    debug "SSH configuration:
+    SSHPASS : $SSHPASS
+    SSH_CMD : $SSH_CMD
+    Repo_RSH: $Repo_RSH
+    Repo_SSH: $Repo_SSH
+    "
+
+  else
+    Solo locale
+  fi
+}
 
 ############################################################################################################### Remote
 
@@ -287,60 +306,7 @@ if [ $REMOTE == "y" ]; then                       # Backup on remote repository?
     if [[ ! $a == "/*" ]]; then
       REMOTE_REPO="/"${REMOTE_REPO}
     fi
-    if [ -n ${SSH_USER} ]; then                   # There is a username? If not exit...
-      if [ -n ${SSH_HOST} ]; then                 # There is an hostname? If not exit...
-        if [ -n ${SSH_CERT} ]; then               # Must I use a certificate?
-          if [ -f "${SSH_CERT}" ]; then           # Is it exist and I can read it?
-            if [ -r "${SSH_CERT}" ]; then         # Are you sure that I can read it?
-              SSHPASS="";
-              SSH_CMD="ssh -p $SSH_PORT -i $SSH_CERT $SSH_USER@$SSH_HOST";
-              Repo_RSH="ssh "${SSH_OPT}" -i "${SSH_CERT};
-              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT$REMOTE_REPO";
-            else
-              error "Certificate not readable!";
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            fi
-          else
-            error "Certificate not found!"
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          fi
-        else                                      # Password is the way!
-          if [ -n $SSH_PASS ]; then               # Have I a password?
-            if [ -z $(command -v sshpass) ]; then
-              error "Cannot find sshpass, please install it!"
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            else
-              SSHPASS="sshpass -p ${SSH_PASS} ";
-              SSH_CMD="${SSHPASS}ssh -p $SSH_PORT $SSH_USER@$SSH_HOST";
-              Repo_RSH="ssh "${SSH_OPT};
-              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT/$REMOTE_REPO";
-            fi
-          else
-            error "SSH Password not provided!";
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          fi
-        fi
-      else
-        error "SSH Hostname not provided!";
-        error "Skip remote backup...";
-        Remote_SKIP=1;
-      fi
-    else
-      error "SSH Username not provided!";
-      error "Skip remote backup...";
-      Remote_SKIP=1;
-    fi
 
-    debug "Remote configuration:
-    SSHPASS : $SSHPASS
-    SSH_CMD : $SSH_CMD
-    Repo_RSH: $Repo_RSH
-    Repo_SSH: $Repo_SSH
-    ";
 
     if [[ $BACKUP == "y" ]]; then
       if [[ $SHOWTEXT == "y" ]]; then
