@@ -1,5 +1,5 @@
 #!/bin/bash
-SVER="0.8.7"
+SVER="0.8.8"
 SDSC="The Next Gen Backup"
 
 set -o noglob
@@ -49,7 +49,7 @@ BORG_OPT=${BORG_OPT:-""};                               # Borg common extra opti
 LOCAL_OPT=${LOCAL_OPT:-""};                             # Borg Local repository extra options
 REMOTE_OPT=${REMOTE_OPT:-""};                           # Borg Remote repository extra options
 
-SSH_OPT=${SSH_OPT:-"-o BatchMode=yes -o StrictHostKeyChecking=accept-new"};
+SSH_OPT=${SSH_OPT:-"-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5"};
 
 LOCAL_DIR_CHECK=${LOCAL_DIR_CHECK:-"stat --format=%F"}; # Check if local path is a directoy
 SSH_DIR_CHECK=${SSH_DIR_CHECK:-"stat --format=%F"};     # Check if remote path is a directoy
@@ -529,7 +529,7 @@ borg_create() {
   unset BORG_REPO;
 }
 
-############################################################################################################### Finisched after
+############################################################################################################### Finished after
 finished_after() {
   echo -n " - Finished after: ";
   if [ -n "$1" ]; then
