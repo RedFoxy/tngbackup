@@ -313,7 +313,45 @@ validate_config() {
 # MENU FUNCTIONS
 # ============================================================================
 
-show_menu() { : ; }
+show_menu() {
+    echo ""
+    echo "╔═══════════════════════════════════╗"
+    echo "║      TNGBackup v2.0.0             ║"
+    echo "╚═══════════════════════════════════╝"
+    echo ""
+    echo "  1) Initialize repository"
+    echo "  2) Backup"
+    echo "  3) List archives"
+    echo "  4) Mount archive"
+    echo "  5) Check repository"
+    echo "  6) Prune old archives"
+    echo "  7) Compact repository"
+    echo "  8) Repository info"
+    echo "  9) Extract files"
+    echo " 10) Delete archive"
+    echo ""
+    echo "  0) Exit (default)"
+    echo ""
+    read -p "Select [0-10]: " choice
+    choice="${choice:-0}"
+
+    case "$choice" in
+        0)  echo "Exiting..."; exit 0 ;;
+        1)  OPERATION="init" ;;
+        2)  OPERATION="backup" ;;
+        3)  OPERATION="list" ;;
+        4)  OPERATION="mount" ;;
+        5)  OPERATION="check" ;;
+        6)  OPERATION="prune" ;;
+        7)  OPERATION="compact" ;;
+        8)  OPERATION="info" ;;
+        9)  OPERATION="extract" ;;
+        10) OPERATION="delete" ;;
+        *)  error "Invalid selection"; show_menu ;;
+    esac
+
+    debug "Menu selection: $choice -> $OPERATION"
+}
 
 # ============================================================================
 # BORG OPERATIONS
@@ -343,12 +381,82 @@ borg_extract() { : ; }
 # CLEANUP FUNCTIONS
 # ============================================================================
 
-cleanup() { : ; }
+cleanup() {
+    debug "Executing cleanup..."
+
+    # Unset all credential variables
+    unset REPO_URI REPO_PASSPHRASE BACKUP_PATH
+    unset TNGB_REPO_URI TNGB_PASSPHRASE TNGB_BACKUP_PATH
+    unset BORG_PASSPHRASE BORG_RSH
+
+    # Destroy temp config (if created)
+    if [ -n "$TEMP_CONFIG" ] && [ -f "$TEMP_CONFIG" ]; then
+        shred -vfz -n 3 "$TEMP_CONFIG" 2>/dev/null || rm -f "$TEMP_CONFIG"
+        debug "Temp config destroyed"
+    fi
+
+    # Umount any Borg mounts (graceful)
+    if [ -n "$MOUNT_PATH" ] && mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
+        debug "Unmounting: $MOUNT_PATH"
+        borg umount "$MOUNT_PATH" 2>/dev/null || true
+    fi
+
+    debug "Cleanup complete"
+}
+
+# Install trap handlers
+trap cleanup EXIT
+trap cleanup INT
+trap cleanup TERM
 
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
 
-main() { : ; }
+main() {
+    START_TIME=$(date +%s)
+
+    # Parse CLI arguments
+    parse_cli_args "$@"
+
+    # Load configuration (file/env/args)
+    if ! load_config "$TNGB_CONFIG"; then
+        error "Failed to load configuration"
+        exit 1
+    fi
+
+    # If no operation specified, show menu
+    if [ -z "$OPERATION" ]; then
+        show_menu
+        # Recursively call with operation
+        exec "$0" "$OPERATION"
+    fi
+
+    # Validate configuration
+    if ! validate_config; then
+        error "Configuration validation failed"
+        exit 1
+    fi
+
+    # Execute operation
+    case "$OPERATION" in
+        init)    borg_init ;;
+        backup)  borg_backup ;;
+        list)    borg_list ;;
+        mount)   borg_mount ;;
+        check)   borg_check ;;
+        compact) borg_compact ;;
+        prune)   borg_prune ;;
+        info)    borg_info ;;
+        delete)  borg_delete ;;
+        extract) borg_extract ;;
+        *)       error "Unknown operation: $OPERATION"; exit 1 ;;
+    esac
+
+    # Record operation status
+    local end_time=$(date +%s)
+    local duration=$((end_time - START_TIME))
+    log "INFO" "Operation completed in ${duration}s"
+}
 
 main "$@"
