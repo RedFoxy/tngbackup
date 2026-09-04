@@ -39,8 +39,4 @@ borg_info() {
       esac
     fi
   fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
 }

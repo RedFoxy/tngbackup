@@ -479,10 +479,6 @@ if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
   fi
 fi
 
-unset BORG_RSH;
-unset BORG_PASSPHRASE;
-unset BORG_REPO;
-
 ################### Post run Script
 
 if [ ! -z "${POSTRUN}" ]; then

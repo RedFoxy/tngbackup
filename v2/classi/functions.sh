@@ -74,3 +74,13 @@ log() {
     esac
   fi
 }
+
+############################################################################################################### Cleanup trap
+cleanup() {
+  unset BORG_PASSPHRASE
+  unset BORG_REPO
+  unset BORG_ENCRYPTION
+  unset BORG_RSH
+}
+
+trap cleanup EXIT
