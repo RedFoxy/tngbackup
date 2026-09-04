@@ -220,6 +220,8 @@ parse_cli_args() {
 
     eval set -- "$opts"
 
+    local path_arg=""
+
     while true; do
         case "$1" in
             -c|--config)
@@ -239,7 +241,7 @@ parse_cli_args() {
                 shift 2
                 ;;
             --path)
-                RESTORE_PATH="$2"
+                path_arg="$2"
                 shift 2
                 ;;
             --mountpoint)
@@ -277,6 +279,15 @@ parse_cli_args() {
     # First positional argument is operation (if provided)
     if [ $# -gt 0 ]; then
         OPERATION="$1"
+    fi
+
+    # Map --path argument to appropriate variable based on operation
+    if [ -n "$path_arg" ]; then
+        case "$OPERATION" in
+            backup) BACKUP_PATH="$path_arg" ;;
+            extract) RESTORE_PATH="$path_arg" ;;
+            *) RESTORE_PATH="$path_arg" ;;
+        esac
     fi
 
     debug "CLI parsing complete: OPERATION=$OPERATION"
@@ -357,11 +368,144 @@ show_menu() {
 # BORG OPERATIONS
 # ============================================================================
 
-borg_init() { : ; }
+calculate_duration() {
+    local end_time=$(date +%s)
+    echo $((end_time - START_TIME))
+}
 
-borg_backup() { : ; }
+audit_log() {
+    local operation="$1"
+    local status="$2"
+    local details="$3"
+    local duration="$4"
 
-borg_list() { : ; }
+    # Return silently if audit log not configured
+    if [ -z "$AUDIT_LOG_FILE" ]; then
+        return 0
+    fi
+
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "$timestamp | $operation | $status | $details | $duration" >> "$AUDIT_LOG_FILE"
+}
+
+borg_init() {
+    log "INFO" "Initializing repository: $REPO_URI"
+
+    # Validate configuration
+    if [ -z "$REPO_URI" ] || [ -z "$REPO_PASSPHRASE" ]; then
+        error "Missing REPO_URI or REPO_PASSPHRASE"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    # Export environment variables
+    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
+    export BORG_REPO="$REPO_URI"
+
+    # Initialize repository with auto-confirm
+    if echo "y" | borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI" 2>&1 | tee -a "$LOG_FILE"; then
+        OPERATION_STATUS="SUCCESS"
+        audit_log "init" "SUCCESS" "$REPO_URI" "$(calculate_duration)"
+        log "INFO" "Repository initialized successfully"
+        return 0
+    else
+        OPERATION_STATUS="FAILED"
+        audit_log "init" "FAILED" "Repository init error" "$(calculate_duration)"
+        error "Failed to initialize repository"
+        return 1
+    fi
+
+    # Clean up
+    unset BORG_PASSPHRASE
+    unset BORG_REPO
+}
+
+borg_backup() {
+    log "INFO" "Starting backup from: $BACKUP_PATH"
+
+    # Validate backup path
+    if [ -z "$BACKUP_PATH" ]; then
+        error "BACKUP_PATH not set"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    # Generate archive name if not provided
+    if [ -z "$ARCHIVE_NAME" ]; then
+        ARCHIVE_NAME="archive-$(date +%Y%m%d-%H%M%S)"
+    fi
+
+    # Export environment variables
+    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
+    export BORG_REPO="$REPO_URI"
+
+    # Build exclude options
+    local exclude_opts=""
+    if [ -n "$BACKUP_EXCLUDE" ]; then
+        # Parse semicolon-separated exclude list
+        IFS=';' read -ra exclude_list <<< "$BACKUP_EXCLUDE"
+        for exclude_item in "${exclude_list[@]}"; do
+            exclude_opts="$exclude_opts --exclude '$exclude_item'"
+        done
+    fi
+
+    # Build and execute backup command
+    local borg_cmd="borg create $BORG_OPT $exclude_opts ::$ARCHIVE_NAME $BACKUP_PATH"
+
+    if echo "y" | eval "$borg_cmd" 2>&1 | tee -a "$LOG_FILE"; then
+        OPERATION_STATUS="SUCCESS"
+        audit_log "backup" "SUCCESS" "$ARCHIVE_NAME" "$(calculate_duration)"
+        log "INFO" "Backup completed: $ARCHIVE_NAME"
+        return 0
+    else
+        OPERATION_STATUS="FAILED"
+        audit_log "backup" "FAILED" "Backup error" "$(calculate_duration)"
+        error "Backup failed for: $BACKUP_PATH"
+        return 1
+    fi
+
+    # Clean up
+    unset BORG_PASSPHRASE
+    unset BORG_REPO
+}
+
+borg_list() {
+    # Export environment variables
+    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
+    export BORG_REPO="$REPO_URI"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        # List contents of specific archive
+        log "INFO" "Listing contents of archive: $ARCHIVE_NAME"
+        if echo "y" | borg list "::$ARCHIVE_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+            OPERATION_STATUS="SUCCESS"
+            audit_log "list" "SUCCESS" "$ARCHIVE_NAME" "$(calculate_duration)"
+            return 0
+        else
+            OPERATION_STATUS="FAILED"
+            audit_log "list" "FAILED" "List error" "$(calculate_duration)"
+            error "Failed to list archive contents"
+            return 1
+        fi
+    else
+        # List all archives
+        log "INFO" "Listing all archives in repository"
+        if echo "y" | borg list "$REPO_URI" 2>&1 | tee -a "$LOG_FILE"; then
+            OPERATION_STATUS="SUCCESS"
+            audit_log "list" "SUCCESS" "all-archives" "$(calculate_duration)"
+            return 0
+        else
+            OPERATION_STATUS="FAILED"
+            audit_log "list" "FAILED" "List error" "$(calculate_duration)"
+            error "Failed to list archives"
+            return 1
+        fi
+    fi
+
+    # Clean up
+    unset BORG_PASSPHRASE
+    unset BORG_REPO
+}
 
 borg_mount() { : ; }
 
