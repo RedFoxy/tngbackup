@@ -56,6 +56,7 @@ LOG_FILE="${LOG_FILE:-}"
 AUDIT_LOG_FILE="${AUDIT_LOG_FILE:-}"
 TEMP_CONFIG="${TEMP_CONFIG:-}"
 START_TIME="${START_TIME:-}"
+OPERATION="${OPERATION:-}"
 OPERATION_STATUS="${OPERATION_STATUS:-}"
 
 # ============================================================================
@@ -133,9 +134,153 @@ For full documentation, see: README.md
 HELPTEXT
 }
 
-load_config() { : ; }
+load_config() {
+    local config_file="$1"
 
-parse_cli_args() { : ; }
+    # Determine config path
+    if [ -z "$config_file" ]; then
+        config_file="$TNGB_CONFIG"
+    fi
+
+    # If config is a directory, process batch mode
+    if [ -d "$config_file" ]; then
+        load_config_batch "$config_file"
+        return $?
+    fi
+
+    # Load single config file
+    if [ -f "$config_file" ]; then
+        debug "Loading config from: $config_file"
+        # Source in current shell (not subshell) to keep variables
+        source "$config_file" || {
+            error "Failed to load config: $config_file"
+            return 1
+        }
+    elif [ "$config_file" != "$TNGB_CONFIG" ]; then
+        # User specified a config file that doesn't exist
+        error "Config file not found: $config_file"
+        return 1
+    fi
+    # If default config doesn't exist, just skip (use env/args)
+
+    debug "Config loaded successfully"
+    return 0
+}
+
+load_config_batch() {
+    local config_dir="$1"
+    local count=0
+
+    debug "Processing batch directory: $config_dir"
+
+    # Process each .conf file in directory
+    for config_file in "$config_dir"/*.conf; do
+        [ -f "$config_file" ] || continue
+
+        log "INFO" "Processing: $config_file"
+
+        # Reset variables for each config
+        REPO_URI=""
+        REPO_PASSPHRASE=""
+        BACKUP_PATH=""
+
+        # Load this config
+        source "$config_file" || {
+            log "WARN" "Failed to load: $config_file, skipping"
+            continue
+        }
+
+        # Validate and execute operation
+        if validate_config; then
+            case "$OPERATION" in
+                backup) borg_backup ;;
+                check)  borg_check ;;
+                prune)  borg_prune ;;
+                # ... other operations will be filled in later tasks
+            esac
+        else
+            log "WARN" "Config validation failed for: $config_file"
+        fi
+
+        ((count++))
+    done
+
+    log "INFO" "Batch processing complete: $count config(s) processed"
+}
+
+parse_cli_args() {
+    # Parse arguments with getopt
+    local opts
+    opts=$(getopt -o c:r:p:l:h \
+        --long config:,repo:,passphrase:,archive:,path:,mountpoint:,log:,audit-log:,help \
+        -n "tngbackup" -- "$@") || {
+        show_help
+        exit 1
+    }
+
+    eval set -- "$opts"
+
+    while true; do
+        case "$1" in
+            -c|--config)
+                TNGB_CONFIG="$2"
+                shift 2
+                ;;
+            -r|--repo)
+                REPO_URI="$2"
+                shift 2
+                ;;
+            -p|--passphrase)
+                REPO_PASSPHRASE="$2"
+                shift 2
+                ;;
+            --archive)
+                ARCHIVE_NAME="$2"
+                shift 2
+                ;;
+            --path)
+                RESTORE_PATH="$2"
+                shift 2
+                ;;
+            --mountpoint)
+                MOUNT_PATH="$2"
+                shift 2
+                ;;
+            -l|--log)
+                LOG_FILE="$2"
+                # Create log file with restricted permissions
+                touch "$LOG_FILE"
+                chmod 600 "$LOG_FILE"
+                shift 2
+                ;;
+            --audit-log)
+                AUDIT_LOG_FILE="$2"
+                touch "$AUDIT_LOG_FILE"
+                chmod 600 "$AUDIT_LOG_FILE"
+                shift 2
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                error "Invalid option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # First positional argument is operation (if provided)
+    if [ $# -gt 0 ]; then
+        OPERATION="$1"
+    fi
+
+    debug "CLI parsing complete: OPERATION=$OPERATION"
+}
 
 validate_config() {
     local required_vars=("REPO_URI" "REPO_PASSPHRASE")
