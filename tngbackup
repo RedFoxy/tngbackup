@@ -62,21 +62,107 @@ OPERATION_STATUS="${OPERATION_STATUS:-}"
 # UTILITY FUNCTIONS
 # ============================================================================
 
-error() { : ; }
+error() {
+    echo "[ERROR] $1" >&2
+}
 
-debug() { : ; }
+debug() {
+    if [ "$DEBUG" = "y" ]; then
+        echo "[DEBUG] $1"
+    fi
+}
 
-log() { : ; }
+log() {
+    local level="$1"
+    local msg="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # Console output
+    if [ "$SHOWTEXT" = "y" ]; then
+        case "$level" in
+            ERROR)   echo "[$timestamp] [ERROR] $msg" >&2 ;;
+            WARN)    echo "[$timestamp] [WARN] $msg" >&2 ;;
+            INFO)    echo "[$timestamp] [INFO] $msg" ;;
+            DEBUG)   [ "$DEBUG" = "y" ] && echo "[$timestamp] [DEBUG] $msg" ;;
+        esac
+    fi
+
+    # File log (if --log specified)
+    if [ -n "$LOG_FILE" ]; then
+        echo "[$timestamp] [$level] $msg" >> "$LOG_FILE"
+    fi
+}
 
 # ============================================================================
 # CONFIGURATION FUNCTIONS
 # ============================================================================
 
-show_help() { : ; }
+show_help() {
+    cat << 'HELPTEXT'
+USAGE: tngbackup [OPERATION] [OPTIONS]
+
+OPERATIONS:
+  init              Initialize new Borg repository
+  backup            Create backup archive
+  list              List archives or archive contents
+  mount             Mount repository or archive
+  check             Verify repository/archive integrity
+  prune             Remove old archives per retention policy
+  compact           Reclaim repository space
+  info              Display repository statistics
+  delete            Delete specific archive (requires --archive)
+  extract           Restore files from archive (requires --archive --path)
+
+OPTIONS:
+  -c, --config FILE/DIR    Config file or directory (default: $TNGB_CONFIG)
+  -r, --repo URI           Repository URI (overrides config)
+  -p, --passphrase PASS    Repository passphrase (overrides config)
+  --archive NAME           Archive name
+  --path PATH              Restore path (for extract)
+  --mountpoint PATH        Mount directory (default: /mnt/borg)
+  -l, --log FILE           Log file path
+  -h, --help               Show this help
+
+EXAMPLES:
+  tngbackup                                           # Interactive menu
+  tngbackup backup --config /etc/tngbackup.conf       # Single backup
+  tngbackup list --archive backup-20250904            # List archive contents
+  tngbackup extract --archive backup-20250904 --path /home/user  # Restore
+
+For full documentation, see: README.md
+HELPTEXT
+}
 
 load_config() { : ; }
 
 parse_cli_args() { : ; }
+
+validate_config() {
+    local required_vars=("REPO_URI" "REPO_PASSPHRASE")
+
+    # Check required variables
+    for var in "${required_vars[@]}"; do
+        if [ -z "${!var:-}" ]; then
+            error "Missing required configuration: $var"
+            return 1
+        fi
+    done
+
+    # Check borg binary
+    if ! command -v borg &>/dev/null; then
+        error "borg binary not found in PATH"
+        return 1
+    fi
+
+    # For backup operation, check BACKUP_PATH
+    if [ "$OPERATION" = "backup" ] && [ -z "$BACKUP_PATH" ]; then
+        error "BACKUP_PATH not set; no files to backup"
+        return 1
+    fi
+
+    debug "Configuration validated successfully"
+    return 0
+}
 
 # ============================================================================
 # MENU FUNCTIONS
