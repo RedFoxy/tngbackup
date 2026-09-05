@@ -1,10 +1,10 @@
 #!/bin/bash
-# TNGBackup v0.9.0
+# TNGBackup v2.0.0
 # License: CC BY-NC 4.0 (Non-Commercial)
 # For commercial use, contact: redfoxy@redfoxy.it
 # Copyright (c) 2026 RedFoxy Darrest
 
-SVER="0.9.0"
+SVER="2.0.0"
 SDSC="The Next Gen Backup - Consolidated"
 
 set -o noglob
