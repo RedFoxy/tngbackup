@@ -1,0 +1,43 @@
+# TNGBackup - systemd timer unit
+#
+# Schedules tngbackup.service once a day.
+#
+# Install:
+#     sudo install -m 0644 docs/tngbackup.timer /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now tngbackup.timer
+#
+# Inspect the schedule:
+#     systemctl list-timers tngbackup.timer
+#
+# Preview when it would fire:
+#     systemd-analyze calendar daily
+
+[Unit]
+Description=Run TNGBackup daily
+Documentation=man:tngbackup(1)
+
+[Timer]
+# Once per day at 00:00 local time. Replace with an explicit time if you want
+# a specific backup window, e.g. OnCalendar=*-*-* 03:00:00
+OnCalendar=daily
+
+# Spread the actual start over the following hour. On a fleet this stops every
+# host from hammering the backup server at the same instant.
+RandomizedDelaySec=1h
+
+# If the machine was off or asleep when the timer should have fired, run as
+# soon as it is available again instead of skipping the day. Essential on
+# laptops and anything not running 24/7.
+Persistent=true
+
+# Wake the system from suspend to run the backup. Uncomment only if that is
+# what you want on this machine.
+# WakeSystem=false
+
+# The service this timer drives. Implicit here (same unit name), but stated
+# for clarity.
+Unit=tngbackup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,35 @@
+# TNGBackup - systemd service unit
+#
+# Install:
+#     sudo install -m 0644 docs/tngbackup.service /etc/systemd/system/
+#     sudo install -m 0644 docs/tngbackup.timer   /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now tngbackup.timer
+#
+# Run once, out of schedule:
+#     sudo systemctl start tngbackup.service
+#
+# Inspect:
+#     journalctl -u tngbackup.service -n 100 --no-pager
+#
+# The unit is scheduled by tngbackup.timer; it is not started at boot itself.
+# The operation ("backup") is named explicitly on the command line: with no
+# operation, tngbackup shows an interactive menu and would block forever here.
+
+[Unit]
+Description=TNGBackup - Borg Backup Management
+# Wait for real network connectivity, needed for ssh:// repositories.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Runs to completion; systemd will not start a second run while one is still
+# in progress, which serialises backups without any locking of our own.
+Type=oneshot
+ExecStart=/usr/local/bin/tngbackup backup --config /etc/tngbackup.conf
+StandardOutput=journal
+StandardError=journal
+Environment="DEBUG=n"
+
+[Install]
+WantedBy=multi-user.target

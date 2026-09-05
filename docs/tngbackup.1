@@ -1,0 +1,976 @@
+.\" Man page for tngbackup
+.\" Contact: RedFoxy Darrest
+.TH TNGBACKUP 1 "September 2026" "TNGBackup 2.0.0" "User Commands"
+.\" ==========================================================================
+.SH NAME
+tngbackup \- The Next Generation Borg Backup management utility
+.\" ==========================================================================
+.SH SYNOPSIS
+.B tngbackup
+.RI [ OPERATION ]
+.RI [ OPTIONS ]
+.PP
+.B tngbackup
+.BR backup " [" \-c
+.IR FILE | DIR ]
+.RB [ \-r
+.IR URI ]
+.RB [ \-p
+.IR PASSPHRASE ]
+.RB [ \-\-archive
+.IR NAME ]
+.RB [ \-\-path
+.IR PATH ]
+.RB [ \-l
+.IR FILE ]
+.RB [ \-\-audit\-log
+.IR FILE ]
+.PP
+.B tngbackup
+.B \-h
+.\" ==========================================================================
+.SH DESCRIPTION
+.B tngbackup
+is a Bash wrapper around
+.BR borg (1)
+that centralises repository configuration, credential handling, retention
+policy and audit logging. A complete backup routine is expressed in a single
+configuration file and driven by one command, suitable for unattended
+execution from
+.BR cron (8)
+or a
+.BR systemd.timer (5).
+.PP
+All ten operations are implemented and are dispatched through a single shared
+handler used identically by single-config and batch runs. The suite is covered
+by
+.I tests/dispatch\-test.sh
+(26 checks, runs anywhere using a stub
+.BR borg )
+and
+.I tests/integration\-test.sh
+(exercises every operation against a throwaway repository; requires a real
+Borg installation). See
+.B TESTS
+below.
+.PP
+Configuration is read from a file that is
+.B sourced
+as Bash, from environment variables, and from command line options. Because a
+configuration file is executed, it must be owned by the invoking user and not
+writable by others.
+.PP
+.B setup_borg_env
+prepares the environment before every Borg invocation: it exports
+.B BORG_PASSPHRASE
+and
+.BR BORG_REPO ,
+and, when
+.B REPO_URI
+begins with
+.BR ssh:// ,
+also exports
+.BI BORG_RSH= "ssh $SSH_OPT \-p $SSH_PORT"
+so that
+.B SSH_OPT
+and
+.B SSH_PORT
+take effect automatically. For a local repository
+.B BORG_RSH
+is unset instead.
+.PP
+Borg is always invoked with standard input closed, and the script exports
+.B BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes
+and
+.BR BORG_RELOCATED_REPO_ACCESS_IS_OK=yes ,
+so a confirmation prompt can never block an unattended run. Both variables
+honour an existing value from the environment.
+.PP
+A trap on
+.BR EXIT ,
+.B INT
+and
+.B TERM
+unsets the credential variables, destroys any temporary configuration file and
+unmounts a leftover FUSE mount point. A successful
+.B mount
+clears the internal mount path first, so the trap never tears down a mount the
+user asked for.
+.PP
+If no operation is given on the command line, an interactive menu is displayed
+and read from standard input. The menu runs before the configuration is loaded
+and only sets the operation; every other option given on the command line
+remains in effect. Never invoke
+.B tngbackup
+without an operation from a non-interactive context, or it will block
+indefinitely.
+.PP
+.B tngbackup
+exits with the exit code of the operation it performed, following Borg's own
+three-way convention: exit
+.B 0
+is recorded
+.BR SUCCESS ,
+exit
+.B 1
+is recorded
+.B WARNING
+and still exits
+.BR 0 ,
+and exit
+.B 2
+or higher is recorded
+.B FAILED
+and exits with that code. A warning means the operation completed and produced
+its result - a backup that could not read a few files still created a usable
+archive - so it is deliberately not treated as a failure. See
+.B "EXIT STATUS"
+below.
+.SS Configuration precedence
+The order of operations is: parse the command line, show the menu if needed,
+save the repository and passphrase given on the command line, source the
+configuration file, then re-apply those two saved values.
+.TP
+.BR \-r ", " \-p
+.B Command line wins.
+.B REPO_URI
+and
+.B REPO_PASSPHRASE
+are re-applied after the configuration file has been sourced.
+.TP
+.BR \-\-archive ", " \-\-path ", " \-\-mountpoint ", " \-l ", " \-\-audit\-log
+Applied
+.B before
+the configuration file is sourced, so a configuration file that assigns the
+corresponding variable unconditionally overrides the command line. Omit the
+assignment, or guard it as
+.BR "VAR=\(dq${VAR:\-default}\(dq" ,
+to let the command line win.
+.TP
+.B \-c
+Always the command line value; it selects the file to source.
+.PP
+In batch mode
+.B \-r
+and
+.B \-p
+have no effect: the batch loop clears both before sourcing each configuration
+file.
+.\" ==========================================================================
+.SH OPERATIONS
+The operation is the first non-option argument. Options may appear before or
+after it. Because
+.B BORG_REPO
+is exported, the repository is usually addressed implicitly and archives with
+the
+.BI :: name
+shorthand.
+.TP
+.B init
+Create a new Borg repository at
+.B REPO_URI
+using
+.BR BORG_ENCRYPTION .
+Runs
+.BR "borg init \-\-encryption=$BORG_ENCRYPTION $REPO_URI" .
+.TP
+.B backup
+Create one archive from
+.BR BACKUP_PATH ,
+honouring
+.B BACKUP_EXCLUDE
+and
+.BR BORG_OPT .
+Runs
+.BR "borg create" .
+The command line is built as an array, so exclusion patterns containing spaces
+are handled correctly;
+.B BORG_OPT
+and
+.B BACKUP_PATH
+are deliberately word-split. If
+.B ARCHIVE_NAME
+is empty, an archive named
+.BI archive\- YYYYmmdd \- HHMMSS
+is generated. Requires
+.BR BACKUP_PATH .
+.TP
+.B list
+List all archives in the repository, or, when
+.B \-\-archive
+is given, the files contained in that archive. The cheapest way to verify
+credentials and connectivity.
+.TP
+.B mount
+Mount the repository, or a single archive when
+.B \-\-archive
+is given, at
+.B MOUNT_PATH
+via FUSE. The mount point is created if missing. On success the unmount
+command is printed;
+.B borg mount
+daemonises, so the mount outlives the process and must be released with
+.BR "borg umount" .
+Requires FUSE support in Borg.
+.TP
+.B check
+Without
+.BR \-\-archive ,
+runs
+.BR "borg check \-\-repository\-only" :
+a fast structural check that does not read archive data, cheap enough to
+schedule weekly. With
+.BR \-\-archive ,
+runs a full consistency check of that archive.
+.B \-\-repair
+is never passed.
+.TP
+.B prune
+Delete archives that no retention rule requires. Runs
+.B "borg prune \-\-list"
+with one
+.BI \-\-keep\- period = N
+option per configured rule, so the log shows exactly which archives were kept
+and pruned. A rule counts as configured when its value is non-empty and not
+.BR 0 .
+If no rule is configured the operation
+.B refuses to run
+and reports a failure, rather than pruning everything. Pruning does not release
+disk space; run
+.B compact
+afterwards.
+.TP
+.B compact
+Rewrite repository segments to physically reclaim the space freed by
+.B prune
+and
+.BR delete .
+Requires Borg 1.2 or newer.
+.TP
+.B info
+Display repository statistics, or statistics for a single archive when
+.B \-\-archive
+is given.
+.TP
+.B delete
+Delete the archive named by
+.BR \-\-archive ,
+which is
+.BR mandatory :
+without it the operation fails immediately, before contacting the repository.
+This is a deliberate guard, since a bare
+.B borg delete
+would target the entire repository. Destructive and not undoable; space is
+reclaimed only after
+.BR compact .
+.TP
+.B extract
+Restore the contents of the archive named by
+.BR \-\-archive ,
+which is
+.BR mandatory .
+The destination is
+.B \-\-path
+(or
+.BR RESTORE_PATH ),
+falling back to the current working directory when neither is set. The
+directory is created if missing, and extraction runs in a subshell that changes
+into it, leaving the caller's working directory untouched. Paths are restored
+relative to that directory, so always extract into a scratch directory and
+inspect the result before moving files into place.
+.\" ==========================================================================
+.SH OPTIONS
+.TP
+.BI \-c " FILE" "\fR, \fP" \-\-config " FILE"
+.TQ
+.BI \-c " DIR" "\fR, \fP" \-\-config " DIR"
+Configuration file to source. Default:
+.I /etc/tngbackup.conf
+or the value of
+.BR TNGB_CONFIG .
+If the argument is a
+.BR directory ,
+.B batch mode
+is used: every
+.I *.conf
+file directly inside it is processed in turn, in alphabetical order. See
+.B "BATCH MODE"
+below.
+.TP
+.BI \-r " URI" "\fR, \fP" \-\-repo " URI"
+Repository URI, setting
+.BR REPO_URI .
+Either a local absolute path or an
+.B ssh://
+URI. Re-applied after the configuration file is sourced, so it overrides the
+file. Ignored in batch mode.
+.TP
+.BI \-p " PASSPHRASE" "\fR, \fP" \-\-passphrase " PASSPHRASE"
+Repository passphrase, setting
+.BR REPO_PASSPHRASE .
+Re-applied after the configuration file, so it overrides the file. Ignored in
+batch mode. Avoid this option on multi-user systems: process command lines are
+visible to every user through
+.BR ps (1).
+.TP
+.BI \-\-archive " NAME"
+Archive name, setting
+.BR ARCHIVE_NAME .
+Optional for
+.BR backup ,
+.BR list ,
+.BR check ,
+.B info
+and
+.BR mount ;
+.B required
+by
+.B delete
+and
+.BR extract .
+.TP
+.BI \-\-path " PATH"
+Context-dependent. With
+.B backup
+it sets
+.BR BACKUP_PATH ;
+with every other operation, including
+.BR extract ,
+it sets
+.BR RESTORE_PATH .
+Note that with
+.B extract
+this is the restore
+.IR destination ,
+not a selector for what to restore.
+.TP
+.BI \-\-mountpoint " PATH"
+Mount directory for
+.BR mount ,
+setting
+.BR MOUNT_PATH .
+Default
+.IR /mnt/borg .
+Created automatically if it does not exist.
+.TP
+.BI \-l " FILE" "\fR, \fP" \-\-log " FILE"
+Human-readable log file. The file is created immediately and its mode set to
+0600; if the path is not writable the run aborts before doing any work. Borg's
+combined output is also written here. Once configured, a later failure to write
+to the log is tolerated and never aborts an operation. When no log file is
+given, Borg output goes to standard output unchanged.
+.TP
+.BI \-\-audit\-log " FILE"
+Structured audit log file. Created immediately with mode 0600. One record is
+appended per completed operation; see
+.B FILES
+below for the format.
+.TP
+.BR \-h ", " \-\-help
+Print the built-in help text and exit with status 0.
+.PP
+Options are parsed with GNU
+.BR getopt (1);
+both
+.BI \-\-config= FILE
+and
+.BI \-\-config " FILE"
+are accepted. An unrecognised option prints the help text and exits with
+status 1.
+.\" ==========================================================================
+.SH CONFIGURATION
+The configuration file is a Bash fragment. Quote every value; use single
+quotes for passphrases so that
+.BR $ ,
+.B `
+and
+.B \e
+are taken literally.
+.SS Core
+.TP
+.B TNGB_CONFIG
+Path of the configuration file or directory. Default
+.IR /etc/tngbackup.conf .
+.TP
+.B DEBUG
+.RB ( y / n ,
+default
+.BR n )
+Print diagnostic output, including the exact Borg command line and the
+retention policy in force.
+.TP
+.B DRYRUN
+.RB ( y / n ,
+default
+.BR n )
+Log each Borg command as
+.RB \(dq [DRY\-RUN]\ borg\ ... \(dq
+and execute nothing. Directory creation for
+.B mount
+and
+.B extract
+is skipped as well. Independent of
+.BR DEBUG ;
+there is no command line flag. Configuration validation still applies, and the
+operation always reports success because nothing ran.
+.TP
+.B SHOWTEXT
+.RB ( y / n ,
+default
+.BR y )
+Print timestamped informational messages to the console.
+.TP
+.B BACKUP
+.RB ( y / n ,
+default
+.BR y )
+Compatibility flag carried over from version 1. The version 2 dispatcher
+selects work by operation name.
+.SS Repository
+.TP
+.B REPO_URI
+Required. Local absolute path or
+.BI ssh:// user@host:port/path
+URI. Exported to Borg as
+.BR BORG_REPO .
+An
+.B ssh://
+URI also triggers automatic
+.B BORG_RSH
+configuration.
+.TP
+.B REPO_PASSPHRASE
+Required. Exported to Borg as
+.BR BORG_PASSPHRASE .
+Validation rejects an empty value even for an unencrypted repository.
+.TP
+.B BORG_ENCRYPTION
+Encryption mode for
+.BR init .
+Default
+.BR repokey\-blake2 .
+.SS Backup
+.TP
+.B BACKUP_PATH
+.B Space
+-separated list of paths to archive. Required for
+.BR backup .
+Paths containing spaces are not supported.
+.TP
+.B BACKUP_EXCLUDE
+.B Semicolon
+-separated list of exclusion patterns; note the different separator from
+.BR BACKUP_PATH .
+Each non-empty item becomes one
+.B \-\-exclude
+argument, and patterns containing spaces are handled correctly. Default empty.
+.TP
+.B ARCHIVE_NAME
+Archive name. If empty,
+.BI archive\- YYYYmmdd \- HHMMSS
+is generated.
+.TP
+.B RESTORE_PATH
+Destination directory for
+.BR extract .
+Falls back to the current working directory when unset.
+.TP
+.B MOUNT_PATH
+Mount point for
+.BR mount .
+Default
+.IR /mnt/borg .
+.SS Borg and SSH
+.TP
+.B BORG_OPT
+Extra options passed to
+.B "borg create"
+only. Word-split, so no single argument may contain spaces.
+.TP
+.B SSH_OPT
+SSH client options used to build
+.B BORG_RSH
+for
+.B ssh://
+repositories. Default:
+.BR "\-o BatchMode=yes \-o StrictHostKeyChecking=accept\-new \-o ConnectTimeout=5" .
+Overriding it replaces the defaults wholesale, so repeat the options you still
+want.
+.TP
+.B SSH_PORT
+SSH port for remote repositories. Default 22.
+.PP
+Setting
+.B BORG_RSH
+by hand is not necessary. Export
+.B BORG_REMOTE_PATH
+from the configuration file if
+.B borg
+is not on the server's non-interactive
+.BR PATH .
+.SS Retention
+.TP
+.BR KEEP_LAST ", " KEEP_HOURLY ", " KEEP_DAILY ", " KEEP_WEEKLY ", " KEEP_MONTHLY ", " KEEP_YEARLY
+Integer retention rules used by
+.BR prune ,
+mapping to Borg's
+.BI \-\-keep\- period
+options. Each rule keeps the newest archive in each time bucket; the archives
+kept are the union of all rules, so the rules overlap rather than add up. A
+value that is empty or
+.B 0
+disables that rule.
+.PP
+Unlike most settings these are
+.B not
+empty by default:
+.BR KEEP_LAST=10 ,
+.BR KEEP_DAILY=7 ,
+.B KEEP_WEEKLY=4
+and
+.BR KEEP_MONTHLY=12 ,
+with
+.B KEEP_HOURLY
+and
+.B KEEP_YEARLY
+unset. A configuration file that never mentions retention therefore still has
+a real policy, and running
+.B prune
+against it will delete archives outside that policy. Set the variables
+explicitly, and confirm the effective policy with
+.B "DEBUG=y DRYRUN=y tngbackup prune"
+before the first prune on any repository. Setting all six to
+.B 0
+does not prune everything: it makes
+.B prune
+refuse to run.
+.SS Logging
+.TP
+.B LOG_FILE
+Human-readable log file path. Empty by default, in which case Borg output goes
+to standard output.
+.TP
+.B AUDIT_LOG_FILE
+Audit log file path. If empty, auditing is disabled silently.
+.\" ==========================================================================
+.SH "BATCH MODE"
+When
+.B \-\-config
+names a directory, every
+.I *.conf
+file directly inside it is processed sequentially, in alphabetical order. For
+each file the script resets
+.BR REPO_URI ,
+.BR REPO_PASSPHRASE ,
+.BR BACKUP_PATH ,
+.B BACKUP_EXCLUDE
+and
+.B ARCHIVE_NAME
+to empty, sources the file, validates the result and runs the requested
+operation through the same dispatcher used by single-config runs. All ten
+operations are supported, although
+.BR backup ,
+.B check
+and
+.B prune
+are the ones that make sense unattended.
+.PP
+A file that fails to source, fails validation, or whose operation fails is
+logged and counted; the batch continues. When the batch finishes,
+.B tngbackup
+.B exits non-zero if any configuration failed,
+so a zero exit status does mean every job at least completed. An operation that
+finished with a Borg warning is
+.B not
+counted as a batch failure, for the same reason it does not fail a single-config
+run: it produced its result. Such runs are still distinguishable in the audit
+log by their
+.B WARNING
+status.
+.PP
+Variables other than the five listed above are
+.B not
+reset between files. In particular
+.BR BORG_OPT ,
+all six
+.BI KEEP_ *
+rules,
+.BR RESTORE_PATH ,
+.BR MOUNT_PATH ,
+.B SSH_OPT
+and
+.B SSH_PORT
+carry over from the previously processed configuration. Set every variable you
+care about explicitly in every batch configuration file, including empty ones;
+an inherited retention rule is a silent data-retention bug.
+.\" ==========================================================================
+.SH TESTS
+.TP
+.I tests/dispatch\-test.sh
+26 checks that run anywhere, with
+.B no Borg installation required:
+a stub
+.B borg
+is placed first on
+.B PATH
+and records the command line it receives. Covers operation dispatch, argument
+construction, retention options, command-line precedence, dry-run, the
+success/warning/failure exit-code mapping, failure propagation, audit-log
+format, absence of passphrase leakage into the logs, and batch mode. Exits
+.B 0
+when all checks pass,
+.B 1
+otherwise.
+.TP
+.I tests/integration\-test.sh
+End-to-end test against a real Borg installation. Creates a throwaway
+repository in a temporary directory, exercises every operation against it,
+verifies the audit log and removes everything. Set
+.B TNGB_TEST_MOUNT=y
+to exercise
+.B mount
+as well, which additionally requires FUSE. Exits
+.B 0
+when all tests pass,
+.B 1
+on failure, and
+.B 2
+when prerequisites are missing, so a CI job can treat
+.B 2
+as skipped.
+.\" ==========================================================================
+.SH FILES
+.TP
+.I /etc/tngbackup.conf
+Default configuration file. Installed with mode 0600 by
+.IR install.sh ,
+which never overwrites an existing one.
+.TP
+.I /etc/tngbackup/
+Conventional batch configuration directory. Should be mode 0700, containing
+files of mode 0600.
+.TP
+.I /var/log/tngbackup.log
+Conventional log file, created mode 0600 by
+.IR install.sh .
+Records have the form
+.RS
+.PP
+.RI [ YYYY\-MM\-DD
+.IR HH:MM:SS ]
+.RI [ LEVEL ]
+.I message
+.RE
+.TP
+.I /var/log/tngbackup-audit.log
+Conventional audit log, created mode 0600 by
+.IR install.sh .
+One pipe-delimited record per completed operation:
+.RS
+.PP
+.I TIMESTAMP_UTC_ISO8601
+|
+.I operation
+|
+.I status
+|
+.I details
+|
+.I duration_seconds
+.PP
+for example:
+.PP
+.nf
+2026\-09\-05T03:04:47Z | backup | SUCCESS | archive\-20260905\-030001 | 286
+2026\-09\-05T04:01:38Z | check | SUCCESS | repository | 97
+2026\-09\-05T04:30:12Z | prune | SUCCESS | \-\-keep\-last=10 \-\-keep\-daily=7 | 12
+2026\-09\-05T03:09:22Z | backup | WARNING | archive\-20260905\-030512 | 250
+2026\-09\-05T03:14:30Z | backup | FAILED | archive\-20260905\-030955 | 275
+.fi
+.PP
+.I status
+is
+.BR SUCCESS ,
+.B WARNING
+or
+.BR FAILED .
+.B WARNING
+records a Borg exit code of 1: the operation completed - the archive on that
+line exists and can be restored from - but something was noteworthy, typically
+a file that could not be read. A monitoring rule that greps for
+.B FAILED
+therefore ignores warnings correctly;
+.\" keep both statuses in mind when alerting on missing backups
+match
+.B SUCCESS
+and
+.B WARNING
+together when checking that a backup happened at all.
+.PP
+.I details
+carries the archive name, the repository URI,
+.BR all\-archives ,
+.BR repository ,
+the retention options applied by
+.BR prune ,
+or
+.IR "ARCHIVE \-> TARGET"
+for
+.B mount
+and
+.BR extract ;
+.I duration_seconds
+counts whole seconds since the script started. In batch mode each
+configuration contributes its own record.
+.RE
+.TP
+.I /usr/local/bin/tngbackup
+Default installation path of the script.
+.TP
+.I /etc/systemd/system/tngbackup.service
+.TQ
+.I /etc/systemd/system/tngbackup.timer
+Optional systemd units for scheduled operation, installed by
+.IR install.sh .
+.\" ==========================================================================
+.SH "EXIT STATUS"
+.B tngbackup
+exits with the exit code of the operation it performed.
+.TP
+.B 0
+Success,
+.B or completed with warnings.
+Also returned by
+.B \-\-help
+and by choosing
+.B 0
+in the interactive menu.
+.TP
+.B 1
+Failure detected by the script itself, before or instead of running Borg:
+invalid option, configuration file not found or unreadable, failed
+validation (missing
+.BR REPO_URI ,
+.B REPO_PASSPHRASE
+or
+.BR BACKUP_PATH ,
+or
+.B borg
+not found in
+.BR PATH ),
+unknown operation, a missing
+.B \-\-archive
+for
+.B delete
+or
+.BR extract ,
+no retention policy configured for
+.BR prune ,
+or an unwritable mountpoint or restore directory. In batch mode, at least one
+configuration failed.
+.TP
+.B 2 and above
+Propagated from Borg itself
+.RB ( 2
+is Borg's own \(lqerror\(rq), or from the shell under
+.BR "set \-euo pipefail" :
+for example
+.B 126
+or
+.B 127
+for a command that could not be executed,
+.B 130
+for interruption by
+.BR SIGINT ,
+.B 143
+for
+.BR SIGTERM .
+.PP
+Borg's convention is
+.B 0
+success,
+.B 1
+warning,
+.B 2
+error, and it is mapped deliberately:
+.RS
+.TP
+.B 0
+Recorded
+.BR SUCCESS ,
+exits
+.BR 0 .
+.TP
+.B 1
+Recorded
+.BR WARNING ,
+logged at
+.B WARN
+level, and
+.B exits 0.
+The operation completed and produced its result; something was merely
+noteworthy, most often a file that could not be read or that vanished
+mid-backup. Such a backup is a usable backup, so it does not fail the run, mark
+a systemd unit failed, or generate cron mail.
+.TP
+.B "2 or higher"
+Recorded
+.BR FAILED ,
+and the exit code passes through unchanged.
+.RE
+.PP
+Note the asymmetry: an exit code of
+.B 1
+from
+.B tngbackup
+never means \(lqBorg warned\(rq - it means the script rejected the request
+before Borg ran. Borg's own warnings never reach the caller as a non-zero
+status.
+.PP
+Warnings likewise do not count as batch failures, so a batch run that exits
+.B 0
+means every configuration at least completed.
+.\" ==========================================================================
+.SH EXAMPLES
+.PP
+Install, then create a repository and take a first backup:
+.PP
+.nf
+.RS
+sudo ./install.sh
+sudo \(dq${EDITOR:\-vi}\(dq /etc/tngbackup.conf
+tngbackup init   \-\-config /etc/tngbackup.conf
+tngbackup backup \-\-config /etc/tngbackup.conf
+.RE
+.fi
+.PP
+Preview what a backup would do, without touching the repository:
+.PP
+.nf
+.RS
+DEBUG=y DRYRUN=y tngbackup backup \-\-config /etc/tngbackup.conf
+.RE
+.fi
+.PP
+Take a backup with an explicit archive name and full logging:
+.PP
+.nf
+.RS
+tngbackup backup \-\-config /etc/tngbackup.conf \e
+    \-\-archive pre\-upgrade\-2026\-09\-05 \e
+    \-\-log /var/log/tngbackup.log \e
+    \-\-audit\-log /var/log/tngbackup\-audit.log
+.RE
+.fi
+.PP
+List all archives, then the contents of one of them:
+.PP
+.nf
+.RS
+tngbackup list \-\-config /etc/tngbackup.conf
+tngbackup list \-\-config /etc/tngbackup.conf \-\-archive archive\-20260905\-030001
+.RE
+.fi
+.PP
+Ad-hoc listing of a repository with no configuration file:
+.PP
+.nf
+.RS
+tngbackup list \-\-repo /mnt/backup/borg\-repo \-\-passphrase 'secret'
+.RE
+.fi
+.PP
+Restore an archive into a scratch directory:
+.PP
+.nf
+.RS
+tngbackup extract \-\-config /etc/tngbackup.conf \e
+    \-\-archive archive\-20260905\-030001 \-\-path /tmp/restore
+.RE
+.fi
+.PP
+Mount an archive for browsing, then unmount it:
+.PP
+.nf
+.RS
+tngbackup mount \-\-config /etc/tngbackup.conf \e
+    \-\-archive archive\-20260905\-030001 \-\-mountpoint /mnt/borg
+borg umount /mnt/borg
+.RE
+.fi
+.PP
+Confirm the retention policy, apply it, and reclaim the freed space:
+.PP
+.nf
+.RS
+DEBUG=y DRYRUN=y tngbackup prune \-\-config /etc/tngbackup.conf
+tngbackup prune   \-\-config /etc/tngbackup.conf
+tngbackup compact \-\-config /etc/tngbackup.conf
+.RE
+.fi
+.PP
+Back up every job in a batch configuration directory:
+.PP
+.nf
+.RS
+tngbackup backup \-\-config /etc/tngbackup/ \e
+    \-\-log /var/log/tngbackup.log \e
+    \-\-audit\-log /var/log/tngbackup\-audit.log
+.RE
+.fi
+.PP
+A nightly
+.BR crontab (5)
+entry:
+.PP
+.nf
+.RS
+0 3 * * * /usr/local/bin/tngbackup backup \-\-config /etc/tngbackup.conf \e
+    \-\-log /var/log/tngbackup.log \-\-audit\-log /var/log/tngbackup\-audit.log
+.RE
+.fi
+.PP
+Check the audit log for failures recorded today, then for warnings separately:
+.PP
+.nf
+.RS
+today=$(date \-u +%Y\-%m\-%d)
+grep \(dq^$today\(dq /var/log/tngbackup\-audit.log | grep '| FAILED |'
+grep \(dq^$today\(dq /var/log/tngbackup\-audit.log | grep '| WARNING |'
+.RE
+.fi
+.PP
+Verify that a backup happened at all today, counting a warning as a backup:
+.PP
+.nf
+.RS
+grep \-qE \(dq^$(date \-u +%Y\-%m\-%d).*\e| backup \e| (SUCCESS|WARNING) \e|\(dq \e
+    /var/log/tngbackup\-audit.log || echo \(dqNO BACKUP TODAY\(dq
+.RE
+.fi
+.\" ==========================================================================
+.SH "SEE ALSO"
+.BR borg (1),
+.BR ssh (1),
+.BR ssh_config (5),
+.BR crontab (5),
+.BR systemd.timer (5),
+.BR logrotate (8)
+.PP
+Borg Backup documentation:
+.UR https://borgbackup.readthedocs.io/
+.UE
+.PP
+The full usage guide is installed with the source as
+.IR docs/USAGE.md ,
+and annotated example configurations as
+.IR docs/examples/ .
+.\" ==========================================================================
+.SH AUTHOR
+RedFoxy Darrest
+.\" ==========================================================================
+.SH LICENSE
+MIT. This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the LICENSE file distributed with the
+source for the full text.

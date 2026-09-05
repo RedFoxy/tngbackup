@@ -12,7 +12,7 @@ TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup
 
 **Versione:** 2.0.0  
 **Licenza:** MIT  
-**Requisiti:** Bash 4.0+, Borg Backup 1.3+
+**Requisiti:** Bash 4.0+, Borg Backup 1.2+
 
 ### Caratteristiche Principali
 
@@ -20,7 +20,7 @@ TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup
 - **Menu Interattivo:** Scegli l'operazione senza ricordare i comandi
 - **Modalità Batch:** Elabora molteplici config da una cartella sequenzialmente
 - **Configurazione Flessibile:** File di config, variabili di ambiente, o parametri CLI
-- **Precedenza Config:** CLI > Variabili d'Ambiente > File di Config > Default
+- **Precedenza Config:** CLI > File di Config > Variabili d'Ambiente > Default
 - **Sicurezza:** Credenziali solo in memoria, no tracce su disco per esecuzioni remote
 - **Audit Log:** Tracciamento completo di ogni operazione (timestamp, stato, durata)
 - **Logging Controllato:** Output su file con permessi sicuri (600)
@@ -70,7 +70,7 @@ REPO_PASSPHRASE="your-secret-passphrase"
 
 # Backup
 BACKUP_PATH="/home /etc /var/www"       # Spazi separati per multi-path
-BACKUP_EXCLUDE="*.tmp *.cache node_modules"
+BACKUP_EXCLUDE="*.tmp;*.cache;node_modules"   # Semicolon-separated patterns
 
 # Encryption
 BORG_ENCRYPTION="repokey-blake2"        # Default: repokey-blake2
@@ -91,10 +91,15 @@ DEBUG=n                                 # Imposta su 'y' per output dettagliato
 
 La configurazione è caricata con questa priorità (dal più alto al più basso):
 
-1. **Parametri CLI** (es. `--repo /tmp/my-repo --passphrase "secret"`)
-2. **Variabili d'Ambiente** (es. `export TNGB_REPO_URI="ssh://..."`)
-3. **File di Configurazione** (es. `--config tngbackup.conf`)
-4. **Valori Default** (hardcoded nello script)
+1. **Parametri CLI** — `--repo` e `--passphrase` sono riapplicati dopo il
+   caricamento del file di config, quindi vincono sempre (esecuzione a config
+   singolo; in modalità batch ogni file definisce il proprio repository)
+2. **File di Configurazione** (es. `--config tngbackup.conf`)
+3. **Variabili d'Ambiente** (es. `REPO_URI=... tngbackup backup`) — usate solo
+   se la variabile non è impostata dal file di config
+4. **Valori Default** (definiti in testa allo script)
+
+Vedi `docs/USAGE.md` per la precedenza dettagliata opzione per opzione.
 
 ### Sicurezza
 
@@ -131,7 +136,7 @@ TNGBackup is a unified management tool for **Borg Backup** operations. It simpli
 
 **Version:** 2.0.0  
 **License:** MIT  
-**Requirements:** Bash 4.0+, Borg Backup 1.3+
+**Requirements:** Bash 4.0+, Borg Backup 1.2+
 
 ### Key Features
 
@@ -139,7 +144,7 @@ TNGBackup is a unified management tool for **Borg Backup** operations. It simpli
 - **Interactive Menu:** Choose operations without memorizing commands
 - **Batch Mode:** Process multiple configs from a directory sequentially
 - **Flexible Configuration:** Config file, environment variables, or CLI arguments
-- **Config Precedence:** CLI > Environment Variables > Config File > Defaults
+- **Config Precedence:** CLI > Config File > Environment Variables > Defaults
 - **Security:** Credentials in memory only, no disk traces for remote execution
 - **Audit Logging:** Full tracking of every operation (timestamp, status, duration)
 - **Controlled Logging:** Output to file with secure permissions (600)
@@ -189,7 +194,7 @@ REPO_PASSPHRASE="your-secret-passphrase"
 
 # Backup
 BACKUP_PATH="/home /etc /var/www"       # Space-separated for multi-path
-BACKUP_EXCLUDE="*.tmp *.cache node_modules"
+BACKUP_EXCLUDE="*.tmp;*.cache;node_modules"   # Semicolon-separated patterns
 
 # Encryption
 BORG_ENCRYPTION="repokey-blake2"        # Default: repokey-blake2
@@ -210,10 +215,15 @@ DEBUG=n                                 # Set to 'y' for detailed output
 
 Configuration is loaded with this priority (highest to lowest):
 
-1. **CLI Arguments** (e.g. `--repo /tmp/my-repo --passphrase "secret"`)
-2. **Environment Variables** (e.g. `export TNGB_REPO_URI="ssh://..."`)
-3. **Configuration File** (e.g. `--config tngbackup.conf`)
-4. **Default Values** (hardcoded in script)
+1. **CLI Arguments** — `--repo` and `--passphrase` are re-applied after the
+   config file is sourced, so they always win (single-config runs; in batch
+   mode every config file defines its own repository)
+2. **Configuration File** (e.g. `--config tngbackup.conf`)
+3. **Environment Variables** (e.g. `REPO_URI=... tngbackup backup`) — used only
+   when the config file does not set the variable
+4. **Default Values** (defined at the top of the script)
+
+See `docs/USAGE.md` for the detailed per-option precedence.
 
 ### Security
 
@@ -246,7 +256,9 @@ ps aux | grep tngbackup
 
 - **Configuration Examples:** `docs/examples/` (local, remote, batch configs)
 - **Detailed Usage Guide:** `docs/USAGE.md`
-- **Project Structure:** See `docs/PROJECT.md`
+- **Man Page:** `docs/tngbackup.1` (installed by `install.sh`)
+- **Systemd Units:** `docs/tngbackup.service`, `docs/tngbackup.timer`
+- **Tests:** `tests/dispatch-test.sh` (no Borg needed), `tests/integration-test.sh`
 
 ## 📝 License
 
