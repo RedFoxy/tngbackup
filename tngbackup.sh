@@ -197,7 +197,7 @@ esac
 if [ $DEBUG == "y" ]; then
   echo "############################################################################";
   echo "REPOSITORY           $REPOSITORY";
-  echo "REPO_PASSPHRASE      $REPO_PASSPHRASE";
+  echo "REPO_PASSPHRASE      $([ -n "$REPO_PASSPHRASE" ] && echo '***REDACTED***' || echo '')";
   echo "CHECK                $CHECK";
   echo "COMPACT              $COMPACT";
   echo "PRUNE                $PRUNE";
@@ -215,7 +215,7 @@ if [ $DEBUG == "y" ]; then
 
   echo "SSH_CERT             $SSH_CERT";
   echo "SSH_HOST             $SSH_HOST";
-  echo "SSH_PASS             $SSH_PASS";
+  echo "SSH_PASS             $([ -n "$SSH_PASS" ] && echo '***REDACTED***' || echo '')";
   echo "SSH_PORT             $SSH_PORT";
   echo "SSH_USER             $SSH_USER";
   echo "--------------------------------------------";
