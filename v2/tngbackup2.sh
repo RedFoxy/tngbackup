@@ -14,12 +14,88 @@ source $(dirname $0)/classi/borg_list.sh
 source $(dirname $0)/classi/borg_mount.sh
 source $(dirname $0)/classi/borg_prune.sh
 
+############################################################################################################### Batch Mode
+batch_mode() {
+  local config_dir="$1"
+  local script_dir="$(dirname $0)"
+  local script_name="$(basename $0)"
+  local config_count=0
+  local config_success=0
+  local config_failed=0
+  local batch_start=$(date "+%s")
+
+  if [ ! -d "$config_dir" ]; then
+    error "Batch directory does not exist: $config_dir"
+    return 1
+  fi
+
+  echo "############################################################################"
+  echo "INFO: Batch mode started - Processing configs from: $config_dir"
+  echo "############################################################################"
+
+  # Process each .conf file in directory
+  # Temporarily disable noglob to allow glob expansion
+  set +o noglob
+  for config_file in "$config_dir"/*.conf; do
+    set -o noglob  # Re-enable after expansion
+
+    if [ ! -f "$config_file" ]; then
+      continue
+    fi
+
+    ((config_count++))
+    local config_basename=$(basename "$config_file")
+    echo ""
+    echo "INFO: Processing $config_basename"
+
+    local single_start=$(date "+%s")
+
+    # Execute backup script with current config file
+    bash "$script_dir/$script_name" "$config_file"
+    local result=$?
+
+    local elapsed=$(($(date "+%s") - single_start))
+
+    if [ $result -eq 0 ]; then
+      ((config_success++))
+      audit_log "batch_process" "SUCCESS" "Completed: $config_basename" "$elapsed"
+      echo "INFO: Successfully processed $config_basename (${elapsed}s)"
+    else
+      ((config_failed++))
+      audit_log "batch_process" "FAILED" "Error: $config_basename" "$elapsed"
+      echo "WARN: Failed to process $config_basename (${elapsed}s)"
+    fi
+  done
+  set -o noglob  # Ensure noglob is re-enabled
+
+  # Summary
+  local batch_end=$(($(date "+%s") - batch_start))
+  echo ""
+  echo "############################################################################"
+  echo "INFO: Batch complete - $config_count files processed, $config_success succeeded, $config_failed failed"
+  finished_after $batch_end
+  echo "############################################################################"
+
+  # Return 0 if at least one succeeded, non-zero only if all failed
+  if [ $config_success -gt 0 ]; then
+    return 0
+  else
+    return 1
+  fi
+}
 
 if [ ! -n "$REPO_PASSPHRASE" ]; then
   if [ ! -n "$1" ]; then
     error "Please provide the configuration file.";
     exit 1;
   else
+    # Check if argument is a directory (batch mode)
+    if [ -d "$1" ]; then
+      batch_mode "$1"
+      exit $?
+    fi
+
+    # Local config file provided
     if [ -f $1 ]; then
       . $1
     else
