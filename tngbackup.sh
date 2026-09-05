@@ -1,8 +1,77 @@
 #!/bin/bash
-SVER="0.8.8"
-SDSC="The Next Gen Backup"
+SVER="0.9.0"
+SDSC="The Next Gen Backup - Consolidated"
 
 set -o noglob
+
+############################################################################################################### Batch Mode
+batch_mode() {
+  local config_dir="$1"
+  local script_dir="$(dirname $0)"
+  local script_name="$(basename $0)"
+  local config_count=0
+  local config_success=0
+  local config_failed=0
+  local batch_start=$(date "+%s")
+
+  if [ ! -d "$config_dir" ]; then
+    error "Batch directory does not exist: $config_dir"
+    return 1
+  fi
+
+  echo "############################################################################"
+  echo "INFO: Batch mode started - Processing configs from: $config_dir"
+  echo "############################################################################"
+
+  # Process each .conf file in directory
+  set +o noglob
+  for config_file in "$config_dir"/*.conf; do
+    set -o noglob
+
+    if [ ! -f "$config_file" ]; then
+      continue
+    fi
+
+    ((config_count++))
+    local config_basename=$(basename "$config_file")
+    echo ""
+    echo "INFO: Processing $config_basename"
+
+    local single_start=$(date "+%s")
+
+    # Execute backup script with current config file
+    bash "$script_dir/$script_name" "$config_file"
+    local result=$?
+
+    local elapsed=$(($(date "+%s") - single_start))
+
+    if [ $result -eq 0 ]; then
+      ((config_success++))
+      audit_log "batch_process" "SUCCESS" "Completed: $config_basename" "$elapsed"
+      echo "INFO: Successfully processed $config_basename (${elapsed}s)"
+    else
+      ((config_failed++))
+      audit_log "batch_process" "FAILED" "Error: $config_basename" "$elapsed"
+      echo "WARN: Failed to process $config_basename (${elapsed}s)"
+    fi
+  done
+  set -o noglob
+
+  # Summary
+  local batch_end=$(($(date "+%s") - batch_start))
+  echo ""
+  echo "############################################################################"
+  echo "INFO: Batch complete - $config_count files processed, $config_success succeeded, $config_failed failed"
+  finished_after $batch_end
+  echo "############################################################################"
+
+  if [ $config_success -gt 0 ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
 error() {
   echo "$1";
 }
@@ -12,6 +81,13 @@ if [ ! -n "$REPO_PASSPHRASE" ]; then
     error "Please provide the configuration file.";
     exit 1;
   else
+    # Check if argument is a directory (batch mode)
+    if [ -d "$1" ]; then
+      batch_mode "$1"
+      exit $?
+    fi
+
+    # Local config file provided
     if [ -f $1 ]; then
       . $1
     else
@@ -529,6 +605,274 @@ borg_create() {
   unset BORG_REPO;
 }
 
+############################################################################################################### Borg - List
+borg_list() {
+  local loc_error=0;
+  local preBorg="";
+  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
+
+  case ${1,,} in
+    "local")
+      export BORG_REPO=${LOCAL_REPO};
+      unset BORG_RSH;
+      ;;
+    "remote")
+      export BORG_RSH=${Repo_RSH};
+      export BORG_REPO=$Repo_SSH;
+      preBorg=${SSHPASS:-}
+      ;;
+    *)
+      loc_error=1;
+      error "Invalid local/remote value, skip list! Actual value: $1";
+      exit 1;
+  esac
+
+  if [ $loc_error == 0 ]; then
+    runCMD "${preBorg}borg list ${BORG_REPO}"
+    if [ $RUN_ERR -gt 0 ]; then
+      error "Failed to list archives from $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
+      error "";
+    else
+      debug "Archives listed from $1 repository";
+    fi
+  fi
+
+  unset BORG_PASSPHRASE;
+  unset BORG_RSH;
+  unset BORG_REPO;
+}
+
+############################################################################################################### Borg - Mount
+borg_mount() {
+  local loc_error=0;
+  local preBorg="";
+  local MOUNT_POINT="";
+  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
+
+  if [ -z "$MOUNT_PATH" ]; then
+    loc_error=1;
+    error "MOUNT_PATH is not defined, cannot mount repository!";
+    return 1;
+  fi
+
+  MOUNT_POINT=$MOUNT_PATH;
+
+  case ${1,,} in
+    "local")
+      export BORG_REPO=${LOCAL_REPO};
+      unset BORG_RSH;
+      ;;
+    "remote")
+      export BORG_RSH=${Repo_RSH};
+      export BORG_REPO=$Repo_SSH;
+      ;;
+    *)
+      loc_error=1;
+      error "Invalid local/remote value, cannot mount repository! Actual value: $1";
+      return 1;
+  esac
+
+  if [ $loc_error == 0 ]; then
+    runCMD "${preBorg}borg mount ${BORG_REPO} ${MOUNT_POINT}"
+    if [ $RUN_ERR -gt 0 ]; then
+      error "Failed to mount $1 repository: ${BORG_REPO}";
+      error "Command: ${RUN_CMD}";
+      error "Message: ${RUN_OUT}";
+      error "";
+      audit_log "mount" "FAILED" "mount failed for $1 repository at ${MOUNT_POINT}" "0"
+      return 1;
+    else
+      debug "Repository mounted successfully for $1 at ${MOUNT_POINT}"
+      audit_log "mount" "SUCCESS" "mount completed for $1 repository at ${MOUNT_POINT}" "0"
+      return 0;
+    fi
+  fi
+  return 1;
+}
+
+############################################################################################################### Borg - Delete
+borg_delete() {
+  local loc_error=0
+  local preBorg=""
+  local archive_name=""
+
+  export BORG_PASSPHRASE=$REPO_PASSPHRASE
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case ${1,,} in
+      --archive)
+        archive_name="$2"
+        shift 2
+        ;;
+      "local"|"remote")
+        if [ -z "$BORG_REPO" ]; then
+          if [ "${1,,}" == "local" ]; then
+            export BORG_REPO=${LOCAL_REPO:-}
+            unset BORG_RSH
+          elif [ "${1,,}" == "remote" ]; then
+            export BORG_RSH=${Repo_RSH:-}
+            export BORG_REPO=${Repo_SSH:-}
+            preBorg=${SSHPASS:-}
+          fi
+        fi
+        shift
+        ;;
+      *)
+        error "Unknown option: $1"
+        loc_error=1
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$archive_name" ]; then
+    error "Option --archive is required for delete operation"
+    audit_log "delete" "FAILED" "Missing required parameter: --archive" "0"
+    return 1
+  fi
+
+  if [ -z "$BORG_REPO" ]; then
+    error "BORG_REPO is not set"
+    audit_log "delete" "FAILED" "BORG_REPO not configured" "0"
+    return 1
+  fi
+
+  if [ $loc_error != 0 ]; then
+    audit_log "delete" "FAILED" "Invalid parameters" "0"
+    return 1
+  fi
+
+  debug "WARNING: About to delete archive '$archive_name' from repository '$BORG_REPO'"
+  debug "This is a destructive operation and cannot be undone"
+
+  runCMD "${preBorg}borg delete ${BORG_REPO}::${archive_name}"
+
+  if [ $RUN_ERR -gt 0 ]; then
+    error "Failed to delete archive '$archive_name' from repository: ${BORG_REPO}"
+    error "Command: ${RUN_CMD}"
+    error "Message: ${RUN_OUT}"
+    audit_log "delete" "FAILED" "Archive deletion failed: $archive_name" "0"
+    return 1
+  else
+    debug "Archive '$archive_name' deleted successfully from ${BORG_REPO}"
+    audit_log "delete" "SUCCESS" "Archive deleted: $archive_name" "0"
+    return 0
+  fi
+}
+
+############################################################################################################### Borg - Extract
+borg_extract() {
+  local loc_error=0
+  local preBorg=""
+  local archive_name=""
+  local extract_path=""
+  local destination_path=""
+
+  export BORG_PASSPHRASE=$REPO_PASSPHRASE
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case ${1,,} in
+      --archive)
+        archive_name="$2"
+        shift 2
+        ;;
+      --path)
+        extract_path="$2"
+        shift 2
+        ;;
+      --destination)
+        destination_path="$2"
+        shift 2
+        ;;
+      "local"|"remote")
+        if [ -z "$BORG_REPO" ]; then
+          if [ "${1,,}" == "local" ]; then
+            export BORG_REPO=${LOCAL_REPO:-}
+            unset BORG_RSH
+          elif [ "${1,,}" == "remote" ]; then
+            export BORG_RSH=${Repo_RSH:-}
+            export BORG_REPO=${Repo_SSH:-}
+            preBorg=${SSHPASS:-}
+          fi
+        fi
+        shift
+        ;;
+      *)
+        error "Unknown option: $1"
+        loc_error=1
+        shift
+        ;;
+    esac
+  done
+
+  if [ -z "$archive_name" ]; then
+    error "Option --archive is required for extract operation"
+    audit_log "extract" "FAILED" "Missing required parameter: --archive" "0"
+    return 1
+  fi
+
+  if [ -z "$extract_path" ]; then
+    error "Option --path is required for extract operation"
+    audit_log "extract" "FAILED" "Missing required parameter: --path" "0"
+    return 1
+  fi
+
+  if [ -z "$BORG_REPO" ]; then
+    error "BORG_REPO is not set"
+    audit_log "extract" "FAILED" "BORG_REPO not configured" "0"
+    return 1
+  fi
+
+  if [ $loc_error != 0 ]; then
+    audit_log "extract" "FAILED" "Invalid parameters" "0"
+    return 1
+  fi
+
+  if [ -z "$destination_path" ]; then
+    destination_path="."
+  fi
+
+  if [ ! -d "$destination_path" ]; then
+    debug "Creating destination directory: $destination_path"
+    mkdir -p "$destination_path" || {
+      error "Failed to create destination directory: $destination_path"
+      audit_log "extract" "FAILED" "Failed to create destination directory" "0"
+      return 1
+    }
+  fi
+
+  local old_pwd=$(pwd)
+  cd "$destination_path" || {
+    error "Failed to change directory to: $destination_path"
+    audit_log "extract" "FAILED" "Failed to change to destination directory" "0"
+    cd "$old_pwd"
+    return 1
+  }
+
+  debug "Extracting '$extract_path' from archive '$archive_name' to directory: $destination_path"
+
+  runCMD "${preBorg}borg extract ${BORG_REPO}::${archive_name} ${extract_path}"
+
+  cd "$old_pwd"
+
+  if [ $RUN_ERR -gt 0 ]; then
+    error "Failed to extract '$extract_path' from archive '$archive_name'"
+    error "Repository: ${BORG_REPO}"
+    error "Command: ${RUN_CMD}"
+    error "Message: ${RUN_OUT}"
+    audit_log "extract" "FAILED" "Failed to extract: $extract_path from $archive_name" "0"
+    return 1
+  else
+    debug "Successfully extracted '$extract_path' from archive '$archive_name' to: $destination_path"
+    audit_log "extract" "SUCCESS" "Extracted: $extract_path from $archive_name" "0"
+    return 0
+  fi
+}
+
 ############################################################################################################### Finished after
 finished_after() {
   echo -n " - Finished after: ";
@@ -567,6 +911,21 @@ log() {
         ;;
     esac
   fi
+}
+
+############################################################################################################### Audit Log
+audit_log() {
+  local operation=$1
+  local status=$2
+  local details=$3
+  local duration=${4:-0}
+
+  if [ -z "$AUDIT_LOG_FILE" ]; then
+    return 0
+  fi
+
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "$timestamp | $operation | $status | $details | $duration" >> "$AUDIT_LOG_FILE"
 }
 
 ############################################################################################################### Exclude list
