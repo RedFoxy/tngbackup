@@ -25,6 +25,7 @@ TNGB_CONFIG="${TNGB_CONFIG:-/etc/tngbackup.conf}"
 
 # Output control
 DEBUG="${DEBUG:-n}"
+DRYRUN="${DRYRUN:-n}"
 SHOWTEXT="${SHOWTEXT:-y}"
 
 # Repository configuration
@@ -32,23 +33,25 @@ REPO_URI="${REPO_URI:-}"
 REPO_PASSPHRASE="${REPO_PASSPHRASE:-}"
 
 # Backup configuration
+BACKUP="${BACKUP:-y}"
 BACKUP_PATH="${BACKUP_PATH:-}"
+BACKUP_EXCLUDE="${BACKUP_EXCLUDE:-}"
 ARCHIVE_NAME="${ARCHIVE_NAME:-}"
 RESTORE_PATH="${RESTORE_PATH:-}"
-MOUNT_PATH="${MOUNT_PATH:-}"
+MOUNT_PATH="${MOUNT_PATH:-/mnt/borg}"
 
 # Borg options
 BORG_ENCRYPTION="${BORG_ENCRYPTION:-repokey-blake2}"
 BORG_OPT="${BORG_OPT:-}"
-SSH_OPT="${SSH_OPT:-}"
+SSH_OPT="${SSH_OPT:--o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5}"
 SSH_PORT="${SSH_PORT:-22}"
 
 # Retention policy
-KEEP_LAST="${KEEP_LAST:-}"
+KEEP_LAST="${KEEP_LAST:-10}"
 KEEP_HOURLY="${KEEP_HOURLY:-}"
-KEEP_DAILY="${KEEP_DAILY:-}"
-KEEP_WEEKLY="${KEEP_WEEKLY:-}"
-KEEP_MONTHLY="${KEEP_MONTHLY:-}"
+KEEP_DAILY="${KEEP_DAILY:-7}"
+KEEP_WEEKLY="${KEEP_WEEKLY:-4}"
+KEEP_MONTHLY="${KEEP_MONTHLY:-12}"
 KEEP_YEARLY="${KEEP_YEARLY:-}"
 
 # Logging and state
@@ -58,6 +61,10 @@ TEMP_CONFIG="${TEMP_CONFIG:-}"
 START_TIME="${START_TIME:-}"
 OPERATION="${OPERATION:-}"
 OPERATION_STATUS="${OPERATION_STATUS:-}"
+
+# Non-interactive Borg behaviour: never block waiting on a TTY prompt.
+export BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK="${BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK:-yes}"
+export BORG_RELOCATED_REPO_ACCESS_IS_OK="${BORG_RELOCATED_REPO_ACCESS_IS_OK:-yes}"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -84,14 +91,98 @@ log() {
             ERROR)   echo "[$timestamp] [ERROR] $msg" >&2 ;;
             WARN)    echo "[$timestamp] [WARN] $msg" >&2 ;;
             INFO)    echo "[$timestamp] [INFO] $msg" ;;
-            DEBUG)   [ "$DEBUG" = "y" ] && echo "[$timestamp] [DEBUG] $msg" ;;
+            DEBUG)   if [ "$DEBUG" = "y" ]; then echo "[$timestamp] [DEBUG] $msg"; fi ;;
         esac
     fi
 
-    # File log (if --log specified)
+    # File log (if --log specified). Never abort the run because the log
+    # file is not writable (e.g. /var/log without root privileges).
     if [ -n "$LOG_FILE" ]; then
-        echo "[$timestamp] [$level] $msg" >> "$LOG_FILE"
+        echo "[$timestamp] [$level] $msg" >> "$LOG_FILE" 2>/dev/null || true
     fi
+}
+
+# Pipe Borg output to the log file when one is configured, otherwise to stdout.
+# Using `tee -a ""` (the previous behaviour) fails when no log file is set.
+tee_log() {
+    if [ -n "$LOG_FILE" ]; then
+        tee -a "$LOG_FILE"
+    else
+        cat
+    fi
+}
+
+# Prepare the Borg environment for the configured repository.
+# Sets BORG_PASSPHRASE/BORG_REPO and, for ssh:// URIs, BORG_RSH.
+setup_borg_env() {
+    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
+    export BORG_REPO="$REPO_URI"
+
+    case "$REPO_URI" in
+        ssh://*)
+            export BORG_RSH="ssh $SSH_OPT -p $SSH_PORT"
+            debug "Remote repository detected, BORG_RSH configured"
+            ;;
+        *)
+            unset BORG_RSH 2>/dev/null || true
+            ;;
+    esac
+}
+
+# Execute a Borg command.
+# Honours DRYRUN, keeps stdin closed so Borg can never hang on a prompt,
+# and mirrors combined output to the log file.
+run_borg() {
+    debug "Executing: borg $*"
+
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] borg $*"
+        return 0
+    fi
+
+    borg "$@" < /dev/null 2>&1 | tee_log
+}
+
+# Common wrapper: run an operation, emit the audit record, set OPERATION_STATUS.
+finish_operation() {
+    local operation="$1"
+    local rc="$2"
+    local details="$3"
+
+    if [ "$rc" -eq 0 ]; then
+        OPERATION_STATUS="SUCCESS"
+        audit_log "$operation" "SUCCESS" "$details" "$(calculate_duration)"
+        log "INFO" "$operation completed successfully"
+    else
+        OPERATION_STATUS="FAILED"
+        audit_log "$operation" "FAILED" "$details" "$(calculate_duration)"
+        error "$operation failed"
+    fi
+
+    return "$rc"
+}
+
+# Build the retention arguments from the KEEP_* configuration.
+# Echoes the arguments; returns 1 when no retention rule is configured.
+build_retention_opts() {
+    local opts=()
+    local rule name value
+
+    for rule in "last:$KEEP_LAST" "hourly:$KEEP_HOURLY" "daily:$KEEP_DAILY" \
+                "weekly:$KEEP_WEEKLY" "monthly:$KEEP_MONTHLY" "yearly:$KEEP_YEARLY"; do
+        name="${rule%%:*}"
+        value="${rule#*:}"
+        if [ -n "$value" ] && [ "$value" != "0" ]; then
+            opts+=("--keep-${name}=${value}")
+        fi
+    done
+
+    if [ "${#opts[@]}" -eq 0 ]; then
+        return 1
+    fi
+
+    printf '%s\n' "${opts[@]}"
+    return 0
 }
 
 # ============================================================================
@@ -170,6 +261,7 @@ load_config() {
 load_config_batch() {
     local config_dir="$1"
     local count=0
+    local failed=0
 
     debug "Processing batch directory: $config_dir"
 
@@ -179,10 +271,12 @@ load_config_batch() {
 
         log "INFO" "Processing: $config_file"
 
-        # Reset variables for each config
+        # Reset per-repository variables so settings never leak between configs
         REPO_URI=""
         REPO_PASSPHRASE=""
         BACKUP_PATH=""
+        BACKUP_EXCLUDE=""
+        ARCHIVE_NAME=""
 
         # Load this config
         source "$config_file" || {
@@ -190,22 +284,44 @@ load_config_batch() {
             continue
         }
 
-        # Validate and execute operation
+        # Validate and execute operation. A failure on one config must not
+        # abort the whole batch.
         if validate_config; then
-            case "$OPERATION" in
-                backup) borg_backup ;;
-                check)  borg_check ;;
-                prune)  borg_prune ;;
-                # ... other operations will be filled in later tasks
-            esac
+            dispatch_operation || {
+                failed=$((failed + 1))
+                log "WARN" "Operation '$OPERATION' failed for: $config_file"
+            }
         else
+            failed=$((failed + 1))
             log "WARN" "Config validation failed for: $config_file"
         fi
 
-        ((count++))
+        count=$((count + 1))
     done
 
-    log "INFO" "Batch processing complete: $count config(s) processed"
+    log "INFO" "Batch processing complete: $count config(s) processed, $failed failed"
+
+    if [ "$failed" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Dispatch OPERATION to the matching handler. Shared by single and batch mode.
+dispatch_operation() {
+    case "$OPERATION" in
+        init)    borg_init ;;
+        backup)  borg_backup ;;
+        list)    borg_list ;;
+        mount)   borg_mount ;;
+        check)   borg_check ;;
+        compact) borg_compact ;;
+        prune)   borg_prune ;;
+        info)    borg_info ;;
+        delete)  borg_delete ;;
+        extract) borg_extract ;;
+        *)       error "Unknown operation: $OPERATION"; return 1 ;;
+    esac
 }
 
 parse_cli_args() {
@@ -391,39 +507,23 @@ audit_log() {
 borg_init() {
     log "INFO" "Initializing repository: $REPO_URI"
 
-    # Validate configuration
     if [ -z "$REPO_URI" ] || [ -z "$REPO_PASSPHRASE" ]; then
         error "Missing REPO_URI or REPO_PASSPHRASE"
         OPERATION_STATUS="FAILED"
         return 1
     fi
 
-    # Export environment variables
-    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
-    export BORG_REPO="$REPO_URI"
+    setup_borg_env
 
-    # Initialize repository with auto-confirm
-    if echo "y" | borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI" 2>&1 | tee -a "$LOG_FILE"; then
-        OPERATION_STATUS="SUCCESS"
-        audit_log "init" "SUCCESS" "$REPO_URI" "$(calculate_duration)"
-        log "INFO" "Repository initialized successfully"
-        return 0
-    else
-        OPERATION_STATUS="FAILED"
-        audit_log "init" "FAILED" "Repository init error" "$(calculate_duration)"
-        error "Failed to initialize repository"
-        return 1
-    fi
+    local rc=0
+    run_borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI" || rc=$?
 
-    # Clean up
-    unset BORG_PASSPHRASE
-    unset BORG_REPO
+    finish_operation "init" "$rc" "$REPO_URI"
 }
 
 borg_backup() {
     log "INFO" "Starting backup from: $BACKUP_PATH"
 
-    # Validate backup path
     if [ -z "$BACKUP_PATH" ]; then
         error "BACKUP_PATH not set"
         OPERATION_STATUS="FAILED"
@@ -435,91 +535,227 @@ borg_backup() {
         ARCHIVE_NAME="archive-$(date +%Y%m%d-%H%M%S)"
     fi
 
-    # Export environment variables
-    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
-    export BORG_REPO="$REPO_URI"
+    setup_borg_env
 
-    # Build exclude options
-    local exclude_opts=""
+    # Build the argument list as an array: no eval, no quoting surprises,
+    # and paths containing spaces are handled correctly.
+    local args=()
+
+    # BORG_OPT is intentionally word-split: it holds user supplied flags.
+    if [ -n "$BORG_OPT" ]; then
+        # shellcheck disable=SC2206
+        args+=($BORG_OPT)
+    fi
+
+    # BACKUP_EXCLUDE is a semicolon separated list of patterns
     if [ -n "$BACKUP_EXCLUDE" ]; then
-        # Parse semicolon-separated exclude list
+        local exclude_list=()
         IFS=';' read -ra exclude_list <<< "$BACKUP_EXCLUDE"
+        local exclude_item
         for exclude_item in "${exclude_list[@]}"; do
-            exclude_opts="$exclude_opts --exclude '$exclude_item'"
+            if [ -n "$exclude_item" ]; then
+                args+=(--exclude "$exclude_item")
+            fi
         done
     fi
 
-    # Build and execute backup command
-    local borg_cmd="borg create $BORG_OPT $exclude_opts ::$ARCHIVE_NAME $BACKUP_PATH"
+    args+=("::$ARCHIVE_NAME")
 
-    if echo "y" | eval "$borg_cmd" 2>&1 | tee -a "$LOG_FILE"; then
-        OPERATION_STATUS="SUCCESS"
-        audit_log "backup" "SUCCESS" "$ARCHIVE_NAME" "$(calculate_duration)"
-        log "INFO" "Backup completed: $ARCHIVE_NAME"
-        return 0
-    else
-        OPERATION_STATUS="FAILED"
-        audit_log "backup" "FAILED" "Backup error" "$(calculate_duration)"
-        error "Backup failed for: $BACKUP_PATH"
-        return 1
-    fi
+    # BACKUP_PATH may list several space separated paths
+    # shellcheck disable=SC2206
+    local backup_targets=($BACKUP_PATH)
+    args+=("${backup_targets[@]}")
 
-    # Clean up
-    unset BORG_PASSPHRASE
-    unset BORG_REPO
+    local rc=0
+    run_borg create "${args[@]}" || rc=$?
+
+    finish_operation "backup" "$rc" "$ARCHIVE_NAME"
 }
 
 borg_list() {
-    # Export environment variables
-    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
-    export BORG_REPO="$REPO_URI"
+    setup_borg_env
+
+    local rc=0
+    local details="all-archives"
 
     if [ -n "$ARCHIVE_NAME" ]; then
-        # List contents of specific archive
         log "INFO" "Listing contents of archive: $ARCHIVE_NAME"
-        if echo "y" | borg list "::$ARCHIVE_NAME" 2>&1 | tee -a "$LOG_FILE"; then
-            OPERATION_STATUS="SUCCESS"
-            audit_log "list" "SUCCESS" "$ARCHIVE_NAME" "$(calculate_duration)"
-            return 0
-        else
-            OPERATION_STATUS="FAILED"
-            audit_log "list" "FAILED" "List error" "$(calculate_duration)"
-            error "Failed to list archive contents"
-            return 1
-        fi
+        details="$ARCHIVE_NAME"
+        run_borg list "::$ARCHIVE_NAME" || rc=$?
     else
-        # List all archives
         log "INFO" "Listing all archives in repository"
-        if echo "y" | borg list "$REPO_URI" 2>&1 | tee -a "$LOG_FILE"; then
-            OPERATION_STATUS="SUCCESS"
-            audit_log "list" "SUCCESS" "all-archives" "$(calculate_duration)"
-            return 0
-        else
-            OPERATION_STATUS="FAILED"
-            audit_log "list" "FAILED" "List error" "$(calculate_duration)"
-            error "Failed to list archives"
-            return 1
+        run_borg list || rc=$?
+    fi
+
+    finish_operation "list" "$rc" "$details"
+}
+
+borg_check() {
+    log "INFO" "Checking repository: $REPO_URI"
+
+    setup_borg_env
+
+    local rc=0
+    local details="repository"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        details="$ARCHIVE_NAME"
+        run_borg check "::$ARCHIVE_NAME" || rc=$?
+    else
+        run_borg check --repository-only || rc=$?
+    fi
+
+    finish_operation "check" "$rc" "$details"
+}
+
+borg_prune() {
+    log "INFO" "Pruning repository: $REPO_URI"
+
+    setup_borg_env
+
+    local retention=()
+    mapfile -t retention < <(build_retention_opts || true)
+
+    if [ "${#retention[@]}" -eq 0 ]; then
+        error "No retention policy configured (set at least one of KEEP_LAST, KEEP_HOURLY, KEEP_DAILY, KEEP_WEEKLY, KEEP_MONTHLY, KEEP_YEARLY)"
+        OPERATION_STATUS="FAILED"
+        audit_log "prune" "FAILED" "no retention policy" "$(calculate_duration)"
+        return 1
+    fi
+
+    debug "Retention policy: ${retention[*]}"
+
+    local rc=0
+    run_borg prune --list "${retention[@]}" || rc=$?
+
+    finish_operation "prune" "$rc" "${retention[*]}"
+}
+
+borg_compact() {
+    log "INFO" "Compacting repository: $REPO_URI"
+
+    setup_borg_env
+
+    local rc=0
+    run_borg compact || rc=$?
+
+    finish_operation "compact" "$rc" "$REPO_URI"
+}
+
+borg_info() {
+    setup_borg_env
+
+    local rc=0
+    local details="repository"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        log "INFO" "Retrieving info for archive: $ARCHIVE_NAME"
+        details="$ARCHIVE_NAME"
+        run_borg info "::$ARCHIVE_NAME" || rc=$?
+    else
+        log "INFO" "Retrieving repository info: $REPO_URI"
+        run_borg info || rc=$?
+    fi
+
+    finish_operation "info" "$rc" "$details"
+}
+
+borg_mount() {
+    if [ -z "$MOUNT_PATH" ]; then
+        error "MOUNT_PATH not set (use --mountpoint)"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    setup_borg_env
+
+    # Create the mountpoint if it does not exist yet
+    if [ ! -d "$MOUNT_PATH" ]; then
+        debug "Creating mountpoint: $MOUNT_PATH"
+        if [ "$DRYRUN" != "y" ]; then
+            mkdir -p "$MOUNT_PATH" || {
+                error "Cannot create mountpoint: $MOUNT_PATH"
+                OPERATION_STATUS="FAILED"
+                return 1
+            }
         fi
     fi
 
-    # Clean up
-    unset BORG_PASSPHRASE
-    unset BORG_REPO
+    local rc=0
+    local details="$MOUNT_PATH"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        log "INFO" "Mounting archive $ARCHIVE_NAME on $MOUNT_PATH"
+        details="$ARCHIVE_NAME -> $MOUNT_PATH"
+        run_borg mount "::$ARCHIVE_NAME" "$MOUNT_PATH" || rc=$?
+    else
+        log "INFO" "Mounting repository on $MOUNT_PATH"
+        run_borg mount "$REPO_URI" "$MOUNT_PATH" || rc=$?
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+        log "INFO" "Unmount with: borg umount $MOUNT_PATH"
+        # The cleanup trap must not unmount what the user just asked for.
+        MOUNT_PATH=""
+    fi
+
+    finish_operation "mount" "$rc" "$details"
 }
 
-borg_mount() { : ; }
+borg_delete() {
+    if [ -z "$ARCHIVE_NAME" ]; then
+        error "delete requires --archive NAME"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
 
-borg_check() { : ; }
+    log "INFO" "Deleting archive: $ARCHIVE_NAME"
 
-borg_compact() { : ; }
+    setup_borg_env
 
-borg_prune() { : ; }
+    local rc=0
+    run_borg delete "::$ARCHIVE_NAME" || rc=$?
 
-borg_info() { : ; }
+    finish_operation "delete" "$rc" "$ARCHIVE_NAME"
+}
 
-borg_delete() { : ; }
+borg_extract() {
+    if [ -z "$ARCHIVE_NAME" ]; then
+        error "extract requires --archive NAME"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
 
-borg_extract() { : ; }
+    setup_borg_env
+
+    # borg extract always restores relative to the current directory
+    local target="${RESTORE_PATH:-$PWD}"
+
+    if [ ! -d "$target" ]; then
+        debug "Creating restore directory: $target"
+        if [ "$DRYRUN" != "y" ]; then
+            mkdir -p "$target" || {
+                error "Cannot create restore path: $target"
+                OPERATION_STATUS="FAILED"
+                return 1
+            }
+        fi
+    fi
+
+    log "INFO" "Extracting archive $ARCHIVE_NAME into $target"
+
+    local rc=0
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] (cd $target && borg extract ::$ARCHIVE_NAME)"
+    else
+        (
+            cd "$target" || exit 1
+            borg extract "::$ARCHIVE_NAME" < /dev/null 2>&1
+        ) | tee_log || rc=$?
+    fi
+
+    finish_operation "extract" "$rc" "$ARCHIVE_NAME -> $target"
+}
 
 # ============================================================================
 # CLEANUP FUNCTIONS
@@ -563,17 +799,37 @@ main() {
     # Parse CLI arguments
     parse_cli_args "$@"
 
-    # Load configuration (file/env/args)
+    # If no operation was given, ask for one before loading the configuration:
+    # batch mode needs to know which operation to run on every config file.
+    if [ -z "$OPERATION" ]; then
+        show_menu
+    fi
+
+    # CLI overrides must survive the config file, which is sourced afterwards.
+    local cli_repo="$REPO_URI"
+    local cli_passphrase="$REPO_PASSPHRASE"
+
+    # Load configuration (file/directory). A directory triggers batch mode and
+    # runs the operation for every config it contains.
+    local rc=0
+    if [ -d "$TNGB_CONFIG" ]; then
+        load_config "$TNGB_CONFIG" || rc=$?
+        local end_time=$(date +%s)
+        log "INFO" "Batch run completed in $((end_time - START_TIME))s"
+        exit "$rc"
+    fi
+
     if ! load_config "$TNGB_CONFIG"; then
         error "Failed to load configuration"
         exit 1
     fi
 
-    # If no operation specified, show menu
-    if [ -z "$OPERATION" ]; then
-        show_menu
-        # Recursively call with operation
-        exec "$0" "$OPERATION"
+    # Re-apply the CLI overrides on top of the config file values
+    if [ -n "$cli_repo" ]; then
+        REPO_URI="$cli_repo"
+    fi
+    if [ -n "$cli_passphrase" ]; then
+        REPO_PASSPHRASE="$cli_passphrase"
     fi
 
     # Validate configuration
@@ -583,24 +839,14 @@ main() {
     fi
 
     # Execute operation
-    case "$OPERATION" in
-        init)    borg_init ;;
-        backup)  borg_backup ;;
-        list)    borg_list ;;
-        mount)   borg_mount ;;
-        check)   borg_check ;;
-        compact) borg_compact ;;
-        prune)   borg_prune ;;
-        info)    borg_info ;;
-        delete)  borg_delete ;;
-        extract) borg_extract ;;
-        *)       error "Unknown operation: $OPERATION"; exit 1 ;;
-    esac
+    dispatch_operation || rc=$?
 
     # Record operation status
     local end_time=$(date +%s)
     local duration=$((end_time - START_TIME))
-    log "INFO" "Operation completed in ${duration}s"
+    log "INFO" "Operation '$OPERATION' finished with status ${OPERATION_STATUS:-UNKNOWN} in ${duration}s"
+
+    exit "$rc"
 }
 
 main "$@"
