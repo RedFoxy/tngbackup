@@ -75,6 +75,21 @@ log() {
   fi
 }
 
+############################################################################################################### Audit Log
+audit_log() {
+  local operation=$1
+  local status=$2
+  local details=$3
+  local duration=${4:-0}
+
+  if [ -z "$AUDIT_LOG_FILE" ]; then
+    return 0
+  fi
+
+  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  echo "$timestamp | $operation | $status | $details | $duration" >> "$AUDIT_LOG_FILE"
+}
+
 ############################################################################################################### Cleanup trap
 cleanup() {
   unset BORG_PASSPHRASE

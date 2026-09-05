@@ -6,6 +6,8 @@ source $(dirname $0)/classi/functions.sh
 source $(dirname $0)/classi/borg_check.sh
 source $(dirname $0)/classi/borg_compact.sh
 source $(dirname $0)/classi/borg_create.sh
+source $(dirname $0)/classi/borg_delete.sh
+source $(dirname $0)/classi/borg_extract.sh
 source $(dirname $0)/classi/borg_info.sh
 source $(dirname $0)/classi/borg_init.sh
 source $(dirname $0)/classi/borg_list.sh
