@@ -1,0 +1,27 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Bash syntax
+        run: |
+          bash -n tngbackup.sh
+          bash -n v2/tngbackup2.sh
+          for file in v2/classi/*.sh; do bash -n "$file"; done
+
+      - name: Check file permissions
+        run: test -x tngbackup.sh
+
+      - name: Run dispatch tests
+        run: bash tests/dispatch-test.sh
+
+      - name: Validate configuration examples
+        run: |
+          if [ -f test.conf.example ]; then
+            bash -n test.conf.example || true
+          fi
