@@ -11,7 +11,7 @@
 TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup**. Semplifica operazioni complesse come backup locali e remoti, verifiche di integrità, gestione della conservazione, montaggio archivi e ripristino selettivo di file — il tutto da un'unica interfaccia.
 
 **Versione:** 2.0.0  
-**Licenza:** MIT  
+**Licenza:** CC BY-NC 4.0 (Non-Commerciale) + Commercial License  
 **Requisiti:** Bash 4.0+, Borg Backup 1.2+
 
 ### Caratteristiche Principali
@@ -135,7 +135,7 @@ ps aux | grep tngbackup
 TNGBackup is a unified management tool for **Borg Backup** operations. It simplifies complex tasks like local and remote backups, integrity verification, retention management, archive mounting, and selective file recovery — all from a single interface.
 
 **Version:** 2.0.0  
-**License:** MIT  
+**License:** CC BY-NC 4.0 (Non-Commercial) + Commercial License  
 **Requirements:** Bash 4.0+, Borg Backup 1.2+
 
 ### Key Features
@@ -262,7 +262,25 @@ ps aux | grep tngbackup
 
 ## 📝 License
 
-MIT — See LICENSE file for details.
+**TNGBackup** is dual-licensed:
+
+### Non-Commercial Use (CC BY-NC 4.0)
+- **Free** to use, modify, and distribute for non-commercial projects
+- Attribution to RedFoxy Darrest required
+- Commercial use prohibited without explicit permission
+
+**License Terms:**
+- You must give appropriate credit and indicate if changes were made
+- You may not use this software for commercial purposes
+
+### Commercial Use
+For commercial use (products, services, consulting, SaaS offerings, enterprise deployments, or any use that directly or indirectly generates revenue), an explicit commercial license is required.
+
+**Commercial License Contact:**  
+Email: redfoxy@redfoxy.it  
+Terms: Negotiated per use case (deployment scale, integration scope, support level)
+
+See LICENSE file for full details.
 
 ## 🤝 Contributing
 
