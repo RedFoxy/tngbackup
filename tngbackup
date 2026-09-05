@@ -149,16 +149,24 @@ finish_operation() {
     local rc="$2"
     local details="$3"
 
+    # Borg exit code convention: 0 = success, 1 = completed with warnings
+    # (e.g. a file could not be read), >=2 = error. A warning must not be
+    # reported as a failure: the archive was created.
     if [ "$rc" -eq 0 ]; then
         OPERATION_STATUS="SUCCESS"
         audit_log "$operation" "SUCCESS" "$details" "$(calculate_duration)"
         log "INFO" "$operation completed successfully"
-    else
-        OPERATION_STATUS="FAILED"
-        audit_log "$operation" "FAILED" "$details" "$(calculate_duration)"
-        error "$operation failed"
+        return 0
+    elif [ "$rc" -eq 1 ]; then
+        OPERATION_STATUS="WARNING"
+        audit_log "$operation" "WARNING" "$details" "$(calculate_duration)"
+        log "WARN" "$operation completed with warnings (borg exit 1)"
+        return 0
     fi
 
+    OPERATION_STATUS="FAILED"
+    audit_log "$operation" "FAILED" "$details" "$(calculate_duration)"
+    error "$operation failed (borg exit $rc)"
     return "$rc"
 }
 
