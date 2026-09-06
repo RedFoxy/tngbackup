@@ -1183,7 +1183,7 @@ Running `tngbackup` with no operation (and no `--help`) shows a menu:
 
 ```
 ╔═══════════════════════════════════╗
-║      TNGBackup v2.0.2             ║
+║      TNGBackup v2.0.3             ║
 ╚═══════════════════════════════════╝
 
   1) Initialize repository
@@ -2248,4 +2248,4 @@ your production Borg version before trusting the tool with real data.
 
 ---
 
-TNGBackup 2.0.2 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial
+TNGBackup 2.0.3 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial

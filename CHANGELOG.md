@@ -4,6 +4,17 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.3] — 2026-09-06
+
+### Fixed
+
+- **Version Check Logic:** Corrected version comparison to properly handle numeric version ordering
+  - Previously showed v2.0.1 as newer than v2.0.2
+  - Now correctly identifies when local version is newer than latest on GitHub
+  - Version comparison now numerically correct (sort -V)
+
+---
+
 ## [2.0.2] — 2026-09-06
 
 ### Fixed
