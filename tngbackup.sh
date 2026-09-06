@@ -381,8 +381,12 @@ check_version() {
     if command -v jq &> /dev/null; then
         latest=$(echo "$response" | jq -r '.tag_name' 2>/dev/null | sed 's/^v//')
     else
-        # Fallback to grep parsing with multiple patterns
-        latest=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*' | head -1 | sed 's/.*"\([^"]*\)".*/\1/' | sed 's/^v//')
+        # Fallback to grep parsing - multiple attempts for robustness
+        latest=$(echo "$response" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/^v//' | head -1)
+        if [ -z "$latest" ]; then
+            # Alternative pattern if Perl regex not supported
+            latest=$(echo "$response" | grep -o '"tag_name"[^,}]*' | cut -d'"' -f4 | sed 's/^v//')
+        fi
     fi
 
     if [ -z "$latest" ] || [ "$latest" = "null" ]; then
