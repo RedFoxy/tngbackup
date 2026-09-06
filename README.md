@@ -1,4 +1,4 @@
-# TNGBackup v2.0.2 — The Next Generation Borg Backup
+# TNGBackup v2.0.3 — The Next Generation Borg Backup
 
 **Multi-language documentation:** [Italiano](#-italiano) | [English](#-english)
 
