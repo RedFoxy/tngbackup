@@ -1,1273 +1,976 @@
 #!/bin/bash
-# TNGBackup v2.0.0
-# License: CC BY-NC 4.0 (Non-Commercial)
-# For commercial use, contact: redfoxy@redfoxy.it
-# Copyright (c) 2026 RedFoxy Darrest
+#
+# TNGBackup — The Next Generation Borg Backup Management Utility
+#
+# SCRIPT METADATA
+#
+SCRIPT_NAME="tngbackup"
+SCRIPT_VERSION="2.0.1"
+SCRIPT_DESC="The Next Generation Borg Backup management utility"
+SCRIPT_AUTHOR="Massimo \"RedFoxy Darrest\" Cicciò"
+SCRIPT_LICENSE="CC BY-NC 4.0 (Non-Commercial) + Commercial License"
 
-SVER="2.0.0"
-SDSC="The Next Gen Backup - Consolidated"
+#
+# SECURITY & STRICT MODE
+#
+set +o history
+set -euo pipefail
 
-set -o noglob
+#
+# DEFAULT VARIABLES
+#
 
-############################################################################################################### Batch Mode
-batch_mode() {
-  local config_dir="$1"
-  local script_dir="$(dirname $0)"
-  local script_name="$(basename $0)"
-  local config_count=0
-  local config_success=0
-  local config_failed=0
-  local batch_start=$(date "+%s")
+# Configuration file path (default: user home directory)
+TNGB_CONFIG="${TNGB_CONFIG:-$HOME/.config/tngbackup.conf}"
 
-  if [ ! -d "$config_dir" ]; then
-    error "Batch directory does not exist: $config_dir"
-    return 1
-  fi
+# Output control
+DEBUG="${DEBUG:-n}"
+DRYRUN="${DRYRUN:-n}"
+SHOWTEXT="${SHOWTEXT:-y}"
 
-  echo "############################################################################"
-  echo "INFO: Batch mode started - Processing configs from: $config_dir"
-  echo "############################################################################"
+# Repository configuration
+REPO_URI="${REPO_URI:-}"
+REPO_PASSPHRASE="${REPO_PASSPHRASE:-}"
 
-  # Process each .conf file in directory
-  set +o noglob
-  for config_file in "$config_dir"/*.conf; do
-    set -o noglob
+# Backup configuration
+BACKUP="${BACKUP:-y}"
+BACKUP_PATH="${BACKUP_PATH:-}"
+BACKUP_EXCLUDE="${BACKUP_EXCLUDE:-}"
+ARCHIVE_NAME="${ARCHIVE_NAME:-}"
+RESTORE_PATH="${RESTORE_PATH:-}"
+MOUNT_PATH="${MOUNT_PATH:-/mnt/borg}"
 
-    if [ ! -f "$config_file" ]; then
-      continue
-    fi
+# Borg options
+BORG_ENCRYPTION="${BORG_ENCRYPTION:-repokey-blake2}"
+BORG_OPT="${BORG_OPT:-}"
+SSH_OPT="${SSH_OPT:--o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5}"
+SSH_PORT="${SSH_PORT:-22}"
 
-    ((config_count++))
-    local config_basename=$(basename "$config_file")
-    echo ""
-    echo "INFO: Processing $config_basename"
+# Retention policy
+KEEP_LAST="${KEEP_LAST:-10}"
+KEEP_HOURLY="${KEEP_HOURLY:-}"
+KEEP_DAILY="${KEEP_DAILY:-7}"
+KEEP_WEEKLY="${KEEP_WEEKLY:-4}"
+KEEP_MONTHLY="${KEEP_MONTHLY:-12}"
+KEEP_YEARLY="${KEEP_YEARLY:-}"
 
-    local single_start=$(date "+%s")
+# Logging and state
+LOG_FILE="${LOG_FILE:-}"
+AUDIT_LOG_FILE="${AUDIT_LOG_FILE:-}"
+TEMP_CONFIG="${TEMP_CONFIG:-}"
+START_TIME="${START_TIME:-}"
+OPERATION="${OPERATION:-}"
+OPERATION_STATUS="${OPERATION_STATUS:-}"
 
-    # Execute backup script with current config file
-    bash "$script_dir/$script_name" "$config_file"
-    local result=$?
+# Non-interactive Borg behaviour: never block waiting on a TTY prompt.
+export BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK="${BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK:-yes}"
+export BORG_RELOCATED_REPO_ACCESS_IS_OK="${BORG_RELOCATED_REPO_ACCESS_IS_OK:-yes}"
 
-    local elapsed=$(($(date "+%s") - single_start))
-
-    if [ $result -eq 0 ]; then
-      ((config_success++))
-      audit_log "batch_process" "SUCCESS" "Completed: $config_basename" "$elapsed"
-      echo "INFO: Successfully processed $config_basename (${elapsed}s)"
-    else
-      ((config_failed++))
-      audit_log "batch_process" "FAILED" "Error: $config_basename" "$elapsed"
-      echo "WARN: Failed to process $config_basename (${elapsed}s)"
-    fi
-  done
-  set -o noglob
-
-  # Summary
-  local batch_end=$(($(date "+%s") - batch_start))
-  echo ""
-  echo "############################################################################"
-  echo "INFO: Batch complete - $config_count files processed, $config_success succeeded, $config_failed failed"
-  finished_after $batch_end
-  echo "############################################################################"
-
-  if [ $config_success -gt 0 ]; then
-    return 0
-  else
-    return 1
-  fi
-}
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
 
 error() {
-  echo "$1";
+    echo "[ERROR] $1" >&2
 }
 
-if [ ! -n "$REPO_PASSPHRASE" ]; then
-  if [ ! -n "$1" ]; then
-    error "Please provide the configuration file.";
-    exit 1;
-  else
-    # Check if argument is a directory (batch mode)
-    if [ -d "$1" ]; then
-      batch_mode "$1"
-      exit $?
-    fi
-
-    # Local config file provided
-    if [ -f $1 ]; then
-      . $1
-    else
-      error $1" file does not exist."
-      exit 1;
-    fi
-  fi
-fi
-
-PATH=$PATH:$PATH_OPT
-
-for bin in borg date; do
-  if [ -z $(command -v ${bin}) ]; then
-    error "Cannot find ${bin}, exiting..."
-    exit 1;
-  fi
-done
-
-DEBUG=${DEBUG:-N};                                      # Attiva il debug
-DRYRUN=${DRYRUN:-N};                                    # Solo se debug attivo - Non eseguire i comandi
-BACKUP=${BACKUP:-Y};                                    # N = No backup     - Y = Run backup
-CHECK=${CHECK:-0};                                      # 0 = No check repo - 1 = Check   before backup - 2 = Check   after backup
-PRUNE=${PRUNE:-0};                                      # 0 = No prune      - 1 = Prune   before backup - 2 = Prune   after backup
-COMPACT=${COMPACT:-0};                                  # 0 = No compact    - 1 = Compact before backup - 2 = Compact after backup
-
-LOCAL=${LOCAL:-N};                                      # Makes Local backup Yes/No
-REMOTE=${REMOTE:-N};                                    # Makes Remote backup Yes/No
-LCREATE_REPO=${LCREATE_REPO:-Y};                        # Create Local repository if not exists
-LCREATE_REPO_DIR=${LCREATE_REPO_DIR:-Y};                # Create Local repository directory if not exists
-RCREATE_REPO=${RCREATE_REPO:-Y};                        # Create Remote repository if not exists
-RCREATE_REPO_DIR=${RCREATE_REPO_DIR:-Y};                # Create Remote repository directory if not exists
-BORG_ENCRIPTION=${BORG_ENCRIPTION:-"repokey-blake2"};   # Borg encription
-SHOWTEXT=${SHOWTEXT:-N}                                 # Show script log
-BORG_OPT=${BORG_OPT:-""};                               # Borg common extra options
-LOCAL_OPT=${LOCAL_OPT:-""};                             # Borg Local repository extra options
-REMOTE_OPT=${REMOTE_OPT:-""};                           # Borg Remote repository extra options
-
-SSH_OPT=${SSH_OPT:-"-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5"};
-
-LOCAL_DIR_CHECK=${LOCAL_DIR_CHECK:-"stat --format=%F"}; # Check if local path is a directoy
-SSH_DIR_CHECK=${SSH_DIR_CHECK:-"stat --format=%F"};     # Check if remote path is a directoy
-
-Mysql_OPT=${Mysql_OPT:-"--add-drop-database --add-drop-table --add-drop-trigger --add-locks --skip-extended-insert"};
-
-if [ ! -n "$REPO_PASSPHRASE" ]; then error "REPO_PASSPHRASE is not set."; exit 1; fi
-if [ ! -n "$BACKUP_PATH" ];     then error "No files or directories to backup are configured."; exit 1; fi
-
-if [[ ! "$SHOWTEXT"            =~ ^[ynYN]$ ]]; then SHOWTEXT="y";         else SHOWTEXT="${SHOWTEXT,,}";                 fi
-if [[ ! "$DEBUG"               =~ ^[ynYN]$ ]]; then DEBUG="n";            else DEBUG="${DEBUG,,}";                       fi
-if [[ ! "$DRYRUN"              =~ ^[ynYN]$ ]]; then DRYRUN="n";           else DRYRUN="${DRYRUN,,}";                     fi
-if [[ ! "$BACKUP"              =~ ^[ynYN]$ ]]; then BACKUP="y";           else BACKUP="${BACKUP,,}";                     fi
-if [[ ! $CHECK                 =~ ^[0-2]$ ]];  then CHECK=0;              else CHECK=$CHECK;                             fi
-if [[ ! $PRUNE                 =~ ^[0-2]$ ]];  then PRUNE=0;              else PRUNE=$PRUNE;                             fi
-if [[ ! $COMPACT               =~ ^[0-2]$ ]];  then COMPACT=0;            else COMPACT=$COMPACT;                         fi
-
-if [[ ! "$LOCAL"               =~ ^[ynYN]$ ]]; then LOCAL="n";            else LOCAL="${LOCAL,,}";                       fi
-if [[ ! "$REMOTE"              =~ ^[ynYN]$ ]]; then REMOTE="n";           else REMOTE="${REMOTE,,}";                     fi
-if [[ ! "$LCREATE_REPO"        =~ ^[ynYN]$ ]]; then LCREATE_REPO="y";     else LCREATE_REPO="${LCREATE_REPO,,}";         fi
-if [[ ! "$LCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then LCREATE_REPO_DIR="y"; else LCREATE_REPO_DIR="${LCREATE_REPO_DIR,,}"; fi
-if [[ ! "$RCREATE_REPO"        =~ ^[ynYN]$ ]]; then RCREATE_REPO="y";     else RCREATE_REPO="${RCREATE_REPO,,}";         fi
-if [[ ! "$RCREATE_REPO_DIR"    =~ ^[ynYN]$ ]]; then RCREATE_REPO_DIR="y"; else RCREATE_REPO_DIR="${RCREATE_REPO_DIR,,}"; fi
-
-if [[ $LOCAL != "y"  || ! "$LOCAL_REPO"  ]]; then LOCAL="n"; fi
-if [[ $REMOTE != "y" || ! "$REMOTE_REPO" ]]; then REMOTE="n"; fi
-if [[ $LOCAL == "n"  && $REMOTE == "n"   ]]; then error "There are no repository, please check LOCAL, LOCAL_REPO, REMOTE, REMOTE_REPO."; exit 1; fi
-
-if [[ ! $LOCAL_KEEP_LAST      =~ ^[0-9]{1,3}$     ]]; then LOCAL_KEEP_LAST=0;     fi
-if [[ ! $LOCAL_KEEP_HOURLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_HOURLY=0;   fi
-if [[ ! $LOCAL_KEEP_DAILY     =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_DAILY=0;    fi
-if [[ ! $LOCAL_KEEP_WEEKLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_WEEKLY=0;   fi
-if [[ ! $LOCAL_KEEP_MONTHLY   =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_MONTHLY=0;  fi
-if [[ ! $LOCAL_KEEP_YEARLY    =~ ^(-|)[0-9]{1,3}$ ]]; then LOCAL_KEEP_YEARLY=0;   fi
-
-if [[ ! $REMOTE_KEEP_LAST     =~ ^[0-9]{1,3}$     ]]; then REMOTE_KEEP_LAST=0;    fi
-if [[ ! $REMOTE_KEEP_HOURLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_HOURLY=0;  fi
-if [[ ! $REMOTE_KEEP_DAILY    =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_DAILY=0;   fi
-if [[ ! $REMOTE_KEEP_WEEKLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_WEEKLY=0;  fi
-if [[ ! $REMOTE_KEEP_MONTHLY  =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_MONTHLY=0; fi
-if [[ ! $REMOTE_KEEP_YEARLY   =~ ^(-|)[0-9]{1,3}$ ]]; then REMOTE_KEEP_YEARLY=0;  fi
-
-if [[ ! $SSH_PORT             =~ ^[0-9]{1,5}$     ]]; then SSH_PORT=22;           else SSH_PORT=$SSH_PORT;               fi
-
-case ${BORG_ENCRIPTION,,} in
-  authenticated)
-    BORG_ENCRIPTION="authenticated";
-    ;;
-  authenticated-blake2)
-    BORG_ENCRIPTION="authenticated-blake2";
-    ;;
-  repokey)
-    BORG_ENCRIPTION="repokey";
-    ;;
-  keyfile)
-    BORG_ENCRIPTION="keyfile";
-    ;;
-  repokey-blake2)
-    BORG_ENCRIPTION="repokey-blake2";
-    ;;
-  keyfile-blake2)
-    BORG_ENCRIPTION="keyfile-blake2";
-    ;;
-  *)
-    BORG_ENCRIPTION="repokey-blake2";
-    ;;
-esac
-
-if [ $DEBUG == "y" ]; then
-  echo "############################################################################";
-  echo "REPOSITORY           $REPOSITORY";
-  echo "REPO_PASSPHRASE      $([ -n "$REPO_PASSPHRASE" ] && echo '***REDACTED***' || echo '')";
-  echo "CHECK                $CHECK";
-  echo "COMPACT              $COMPACT";
-  echo "PRUNE                $PRUNE";
-  echo "SHOWTEXT             $SHOWTEXT";
-  echo "DEBUG                $DEBUG";
-  echo "DRYRUN               $DRYRUN";
-  echo "BORG_OPT             $BORG_OPT";
-  echo "BORG_ENCRIPTION      $BORG_ENCRIPTION";
-  echo "Mysql_OPT            $Mysql_OPT";
-
-  echo "--------------------------------------------";
-  echo "POSTRUN              $POSTRUN";
-  echo "PRERUN               $PRERUN";
-  echo "--------------------------------------------";
-
-  echo "SSH_CERT             $SSH_CERT";
-  echo "SSH_HOST             $SSH_HOST";
-  echo "SSH_PASS             $([ -n "$SSH_PASS" ] && echo '***REDACTED***' || echo '')";
-  echo "SSH_PORT             $SSH_PORT";
-  echo "SSH_USER             $SSH_USER";
-  echo "--------------------------------------------";
-
-  echo "BACKUP               $BACKUP";
-  echo "BACKUP_EXCL          $BACKUP_EXCL";
-  echo "BACKUP_PATH          $BACKUP_PATH";
-  echo "--------------------------------------------";
-
-  echo "LOCAL_REPO           $LOCAL_REPO";
-  echo "LCREATE_REPO         $LCREATE_REPO";
-  echo "LCREATE_REPO_DIR     $LCREATE_REPO_DIR";
-  echo "LOCAL_OPT            $LOCAL_OPT";
-  echo -e "\n"
-
-  echo "LOCAL                $LOCAL";
-  echo "LOCAL_DIR_CHECK      $LOCAL_DIR_CHECK";
-  echo "LOCAL_KEEP_DAILY     $LOCAL_KEEP_DAILY";
-  echo "LOCAL_KEEP_HOURLY    $LOCAL_KEEP_HOURLY";
-  echo "LOCAL_KEEP_LAST      $LOCAL_KEEP_LAST";
-  echo "LOCAL_KEEP_MONTHLY   $LOCAL_KEEP_MONTHLY";
-  echo "LOCAL_KEEP_WEEKLY    $LOCAL_KEEP_WEEKLY";
-  echo "LOCAL_KEEP_YEARLY    $LOCAL_KEEP_YEARLY";
-  echo "--------------------------------------------";
-
-  echo "REMOTE_REPO          $REMOTE_REPO";
-  echo "RCREATE_REPO         $RCREATE_REPO";
-  echo "RCREATE_REPO_DIR     $RCREATE_REPO_DIR";
-  echo "REMOTE_OPT           $REMOTE_OPT";
-  echo -e "\n"
-
-  echo "REMOTE               $REMOTE";
-  echo "REMOTE_KEEP_DAILY    $REMOTE_KEEP_DAILY";
-  echo "REMOTE_KEEP_HOURLY   $REMOTE_KEEP_HOURLY";
-  echo "REMOTE_KEEP_LAST     $REMOTE_KEEP_LAST";
-  echo "REMOTE_KEEP_MONTHLY  $REMOTE_KEEP_MONTHLY";
-  echo "REMOTE_KEEP_WEEKLY   $REMOTE_KEEP_WEEKLY";
-  echo "REMOTE_KEEP_YEARLY   $REMOTE_KEEP_YEARLY";
-  echo "############################################################################";
-fi
-
-if [[ $LOCAL == "n" && $REMOTE == "n" ]]; then
-  echo "There are no active repositories.";
-  exit 1;
-fi
-
-Backup_Start=`date "+%s"`;
-Backup_UID=`date "+%Y-%m-%d_%H-%M-%S"`;
-Local_SKIP=0;
-Remote_SKIP=0;
-RUN_ERR=0
-RUN_OUT=""
-
-############################################################################################################### Functions
-
-############################################################################################################### Debug
 debug() {
-  if [ -n "$1" ] && [ $DEBUG == "y" ]; then
-    echo -e "$1";
-  fi
-}
-
-############################################################################################################### Run command
-runCMD() {
-  if [ -n "$1" ]; then
-    RUN_ERR=0; RUN_OUT="";
-    debug "\n----------------------------------------------------------------------------\n--- Command: ${1}"
-    if [ ! $DRYRUN == "y" ]; then
-      RUN_CMD=$1;
-      RUN_OUT=$(eval ${RUN_CMD} 2>&1);
-      RUN_ERR=$?;
-      if [[ $RUN_ERR > 0 ]]; then RUN_ERR=1; fi
-      debug "--- Error  : ${RUN_ERR}\n--- Output : \n${RUN_OUT}";
+    if [ "$DEBUG" = "y" ]; then
+        echo "[DEBUG] $1"
     fi
-    debug "----------------------------------------------------------------------------";
-  else
-    echo "Command not found!";
-    exit 127;
-  fi
 }
 
-############################################################################################################### Borg - Prune
-borg_prune() {
-  local loc_error=0;
-  local preBorg="";
-  local PRUNE_OPT=""
-
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      if [[ $LOCAL_KEEP_LAST > 0 ]]; then
-        PRUNE_OPT=" --keep-last=$LOCAL_KEEP_LAST";
-      else
-        if [[ $LOCAL_KEEP_HOURLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-hourly=$LOCAL_KEEP_HOURLY";   fi
-        if [[ $LOCAL_KEEP_DAILY   > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-daily=$LOCAL_KEEP_DAILY";     fi
-        if [[ $LOCAL_KEEP_WEEKLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-weekly=$LOCAL_KEEP_WEEKLY";   fi
-        if [[ $LOCAL_KEEP_MONTHLY > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-monthly=$LOCAL_KEEP_MONTHLY"; fi
-        if [[ $LOCAL_KEEP_YEARLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-yearly=$LOCAL_KEEP_YEARLY";   fi
-      fi
-
-      if [[ "$PRUNE_OPT" == "" ]]; then
-        loc_error=1;
-        error "No valid prune option, skip prune!";
-      else
-        export BORG_REPO=${LOCAL_REPO};
-        unset BORG_RSH;
-      fi
-      ;;
-    "remote")
-      if [[ $REMOTE_KEEP_LAST > 0 ]]; then
-        PRUNE_OPT=" --keep-last=$REMOTE_KEEP_LAST";
-      else
-        if [[ $REMOTE_KEEP_HOURLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-hourly=$REMOTE_KEEP_HOURLY";   fi
-        if [[ $REMOTE_KEEP_DAILY   > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-daily=$REMOTE_KEEP_DAILY";     fi
-        if [[ $REMOTE_KEEP_WEEKLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-weekly=$REMOTE_KEEP_WEEKLY";   fi
-        if [[ $REMOTE_KEEP_MONTHLY > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-monthly=$REMOTE_KEEP_MONTHLY"; fi
-        if [[ $REMOTE_KEEP_YEARLY  > 0 ]]; then PRUNE_OPT="$PRUNE_OPT --keep-yearly=$REMOTE_KEEP_YEARLY";   fi
-      fi
-
-      if [[ "$PRUNE_OPT" == "" ]]; then
-        loc_error=1;
-        error "No valid prune option, skip prune!";
-      else
-        export BORG_RSH=${Repo_RSH};
-        export BORG_REPO=$Repo_SSH;
-        preBorg=${SSHPASS}
-      fi
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg prune ${PRUNE_OPT}"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to prune $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;
-          ;;
-        "remote")
-          Remote_SKIP=1;
-          ;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Compact
-borg_compact() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg compact"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to compact $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;
-          ;;
-        "remote")
-          Remote_SKIP=1;
-          ;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Check
-borg_check() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg check --repository-only"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to check $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;
-          ;;
-        "remote")
-          Remote_SKIP=1;
-          ;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Info
-borg_info() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-      ;;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg info"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to get info from $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;;
-        "remote")
-          Remote_SKIP=1;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Init
-borg_init() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg init --encryption=${BORG_ENCRIPTION}"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to initialize $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;;
-        "remote")
-          Remote_SKIP=1;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Create
-borg_create() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      EXTRA_OPT=${BORG_OPT} ${LOCAL_OPT}
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      EXTRA_OPT=${BORG_OPT} ${REMOTE_OPT}
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip getting repository info! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg create ${EXTRA_OPT} ${BORG_EXCLUDE} ::${Backup_UID} ${BORG_PATH}"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to create $1 backup: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "Skip $1 backup...";
-      error "";
-
-      case ${1,,} in
-        "local")
-          Local_SKIP=1;
-          ;;
-        "remote")
-          Remote_SKIP=1;
-          ;;
-      esac
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - List
-borg_list() {
-  local loc_error=0;
-  local preBorg="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      preBorg=${SSHPASS:-}
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, skip list! Actual value: $1";
-      exit 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg list ${BORG_REPO}"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to list archives from $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "";
-    else
-      debug "Archives listed from $1 repository";
-    fi
-  fi
-
-  unset BORG_PASSPHRASE;
-  unset BORG_RSH;
-  unset BORG_REPO;
-}
-
-############################################################################################################### Borg - Mount
-borg_mount() {
-  local loc_error=0;
-  local preBorg="";
-  local MOUNT_POINT="";
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE;
-
-  if [ -z "$MOUNT_PATH" ]; then
-    loc_error=1;
-    error "MOUNT_PATH is not defined, cannot mount repository!";
-    return 1;
-  fi
-
-  MOUNT_POINT=$MOUNT_PATH;
-
-  case ${1,,} in
-    "local")
-      export BORG_REPO=${LOCAL_REPO};
-      unset BORG_RSH;
-      ;;
-    "remote")
-      export BORG_RSH=${Repo_RSH};
-      export BORG_REPO=$Repo_SSH;
-      ;;
-    *)
-      loc_error=1;
-      error "Invalid local/remote value, cannot mount repository! Actual value: $1";
-      return 1;
-  esac
-
-  if [ $loc_error == 0 ]; then
-    runCMD "${preBorg}borg mount ${BORG_REPO} ${MOUNT_POINT}"
-    if [ $RUN_ERR -gt 0 ]; then
-      error "Failed to mount $1 repository: ${BORG_REPO}";
-      error "Command: ${RUN_CMD}";
-      error "Message: ${RUN_OUT}";
-      error "";
-      audit_log "mount" "FAILED" "mount failed for $1 repository at ${MOUNT_POINT}" "0"
-      return 1;
-    else
-      debug "Repository mounted successfully for $1 at ${MOUNT_POINT}"
-      audit_log "mount" "SUCCESS" "mount completed for $1 repository at ${MOUNT_POINT}" "0"
-      return 0;
-    fi
-  fi
-  return 1;
-}
-
-############################################################################################################### Borg - Delete
-borg_delete() {
-  local loc_error=0
-  local preBorg=""
-  local archive_name=""
-
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE
-
-  # Parse arguments
-  while [[ $# -gt 0 ]]; do
-    case ${1,,} in
-      --archive)
-        archive_name="$2"
-        shift 2
-        ;;
-      "local"|"remote")
-        if [ -z "$BORG_REPO" ]; then
-          if [ "${1,,}" == "local" ]; then
-            export BORG_REPO=${LOCAL_REPO:-}
-            unset BORG_RSH
-          elif [ "${1,,}" == "remote" ]; then
-            export BORG_RSH=${Repo_RSH:-}
-            export BORG_REPO=${Repo_SSH:-}
-            preBorg=${SSHPASS:-}
-          fi
-        fi
-        shift
-        ;;
-      *)
-        error "Unknown option: $1"
-        loc_error=1
-        shift
-        ;;
-    esac
-  done
-
-  if [ -z "$archive_name" ]; then
-    error "Option --archive is required for delete operation"
-    audit_log "delete" "FAILED" "Missing required parameter: --archive" "0"
-    return 1
-  fi
-
-  if [ -z "$BORG_REPO" ]; then
-    error "BORG_REPO is not set"
-    audit_log "delete" "FAILED" "BORG_REPO not configured" "0"
-    return 1
-  fi
-
-  if [ $loc_error != 0 ]; then
-    audit_log "delete" "FAILED" "Invalid parameters" "0"
-    return 1
-  fi
-
-  debug "WARNING: About to delete archive '$archive_name' from repository '$BORG_REPO'"
-  debug "This is a destructive operation and cannot be undone"
-
-  runCMD "${preBorg}borg delete ${BORG_REPO}::${archive_name}"
-
-  if [ $RUN_ERR -gt 0 ]; then
-    error "Failed to delete archive '$archive_name' from repository: ${BORG_REPO}"
-    error "Command: ${RUN_CMD}"
-    error "Message: ${RUN_OUT}"
-    audit_log "delete" "FAILED" "Archive deletion failed: $archive_name" "0"
-    return 1
-  else
-    debug "Archive '$archive_name' deleted successfully from ${BORG_REPO}"
-    audit_log "delete" "SUCCESS" "Archive deleted: $archive_name" "0"
-    return 0
-  fi
-}
-
-############################################################################################################### Borg - Extract
-borg_extract() {
-  local loc_error=0
-  local preBorg=""
-  local archive_name=""
-  local extract_path=""
-  local destination_path=""
-
-  export BORG_PASSPHRASE=$REPO_PASSPHRASE
-
-  # Parse arguments
-  while [[ $# -gt 0 ]]; do
-    case ${1,,} in
-      --archive)
-        archive_name="$2"
-        shift 2
-        ;;
-      --path)
-        extract_path="$2"
-        shift 2
-        ;;
-      --destination)
-        destination_path="$2"
-        shift 2
-        ;;
-      "local"|"remote")
-        if [ -z "$BORG_REPO" ]; then
-          if [ "${1,,}" == "local" ]; then
-            export BORG_REPO=${LOCAL_REPO:-}
-            unset BORG_RSH
-          elif [ "${1,,}" == "remote" ]; then
-            export BORG_RSH=${Repo_RSH:-}
-            export BORG_REPO=${Repo_SSH:-}
-            preBorg=${SSHPASS:-}
-          fi
-        fi
-        shift
-        ;;
-      *)
-        error "Unknown option: $1"
-        loc_error=1
-        shift
-        ;;
-    esac
-  done
-
-  if [ -z "$archive_name" ]; then
-    error "Option --archive is required for extract operation"
-    audit_log "extract" "FAILED" "Missing required parameter: --archive" "0"
-    return 1
-  fi
-
-  if [ -z "$extract_path" ]; then
-    error "Option --path is required for extract operation"
-    audit_log "extract" "FAILED" "Missing required parameter: --path" "0"
-    return 1
-  fi
-
-  if [ -z "$BORG_REPO" ]; then
-    error "BORG_REPO is not set"
-    audit_log "extract" "FAILED" "BORG_REPO not configured" "0"
-    return 1
-  fi
-
-  if [ $loc_error != 0 ]; then
-    audit_log "extract" "FAILED" "Invalid parameters" "0"
-    return 1
-  fi
-
-  if [ -z "$destination_path" ]; then
-    destination_path="."
-  fi
-
-  if [ ! -d "$destination_path" ]; then
-    debug "Creating destination directory: $destination_path"
-    mkdir -p "$destination_path" || {
-      error "Failed to create destination directory: $destination_path"
-      audit_log "extract" "FAILED" "Failed to create destination directory" "0"
-      return 1
-    }
-  fi
-
-  local old_pwd=$(pwd)
-  cd "$destination_path" || {
-    error "Failed to change directory to: $destination_path"
-    audit_log "extract" "FAILED" "Failed to change to destination directory" "0"
-    cd "$old_pwd"
-    return 1
-  }
-
-  debug "Extracting '$extract_path' from archive '$archive_name' to directory: $destination_path"
-
-  runCMD "${preBorg}borg extract ${BORG_REPO}::${archive_name} ${extract_path}"
-
-  cd "$old_pwd"
-
-  if [ $RUN_ERR -gt 0 ]; then
-    error "Failed to extract '$extract_path' from archive '$archive_name'"
-    error "Repository: ${BORG_REPO}"
-    error "Command: ${RUN_CMD}"
-    error "Message: ${RUN_OUT}"
-    audit_log "extract" "FAILED" "Failed to extract: $extract_path from $archive_name" "0"
-    return 1
-  else
-    debug "Successfully extracted '$extract_path' from archive '$archive_name' to: $destination_path"
-    audit_log "extract" "SUCCESS" "Extracted: $extract_path from $archive_name" "0"
-    return 0
-  fi
-}
-
-############################################################################################################### Finished after
-finished_after() {
-  echo -n " - Finished after: ";
-  if [ -n "$1" ]; then
-    if [ $1 -gt 60 ]; then
-      if [ $1 -gt 3600 ]; then
-        echo $(date -d@$1 -u +%H:%M:%S);
-      else
-        echo $(date -d@$1 -u +%M:%S);
-      fi
-    else
-      echo $1" sec";
-    fi
-  else
-    echo "0 sec";
-  fi
-}
-
-############################################################################################################### Log
 log() {
-  if [ -n "$1" ]; then
-    local text=$1;
-    local space=19;
+    local level="$1"
+    local msg="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    case ${text,,} in
-      -n)
-        text="$2"
-        printf "#"' %s%*s: '"`date "+%d/%m/%Y %H:%M:%S"`" "$text" "$(($space-${#text}))" "";
-        ;;
-      -d)
-        text="$3"
-        printf "#"' %s%*s: '"`date "+%d/%m/%Y %H:%M:%S" --date=@$2`" "$text" "$(($space-${#text}))" "";
-        ;;
-      *)
-        printf "#"' %s%*s: '"${2}"'\n' "$text" "$(($space-${#text}))" "";
-        ;;
+    # Console output
+    if [ "$SHOWTEXT" = "y" ]; then
+        case "$level" in
+            ERROR)   echo "[$timestamp] [ERROR] $msg" >&2 ;;
+            WARN)    echo "[$timestamp] [WARN] $msg" >&2 ;;
+            INFO)    echo "[$timestamp] [INFO] $msg" ;;
+            DEBUG)   if [ "$DEBUG" = "y" ]; then echo "[$timestamp] [DEBUG] $msg"; fi ;;
+        esac
+    fi
+
+    # File log (if --log specified). Never abort the run because the log
+    # file is not writable (e.g. /var/log without root privileges).
+    if [ -n "$LOG_FILE" ]; then
+        echo "[$timestamp] [$level] $msg" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+}
+
+# Pipe Borg output to the log file when one is configured, otherwise to stdout.
+# Using `tee -a ""` (the previous behaviour) fails when no log file is set.
+tee_log() {
+    if [ -n "$LOG_FILE" ]; then
+        tee -a "$LOG_FILE"
+    else
+        cat
+    fi
+}
+
+# Prepare the Borg environment for the configured repository.
+# Sets BORG_PASSPHRASE/BORG_REPO and, for ssh:// URIs, BORG_RSH.
+setup_borg_env() {
+    export BORG_PASSPHRASE="$REPO_PASSPHRASE"
+    export BORG_REPO="$REPO_URI"
+
+    case "$REPO_URI" in
+        ssh://*)
+            export BORG_RSH="ssh $SSH_OPT -p $SSH_PORT"
+            debug "Remote repository detected, BORG_RSH configured"
+            ;;
+        *)
+            unset BORG_RSH 2>/dev/null || true
+            ;;
     esac
-  fi
 }
 
-############################################################################################################### Audit Log
-audit_log() {
-  local operation=$1
-  local status=$2
-  local details=$3
-  local duration=${4:-0}
+# Execute a Borg command.
+# Honours DRYRUN, keeps stdin closed so Borg can never hang on a prompt,
+# and mirrors combined output to the log file.
+run_borg() {
+    debug "Executing: borg $*"
 
-  if [ -z "$AUDIT_LOG_FILE" ]; then
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] borg $*"
+        return 0
+    fi
+
+    borg "$@" < /dev/null 2>&1 | tee_log
+}
+
+# Common wrapper: run an operation, emit the audit record, set OPERATION_STATUS.
+finish_operation() {
+    local operation="$1"
+    local rc="$2"
+    local details="$3"
+
+    # Borg exit code convention: 0 = success, 1 = completed with warnings
+    # (e.g. a file could not be read), >=2 = error. A warning must not be
+    # reported as a failure: the archive was created.
+    if [ "$rc" -eq 0 ]; then
+        OPERATION_STATUS="SUCCESS"
+        audit_log "$operation" "SUCCESS" "$details" "$(calculate_duration)"
+        log "INFO" "$operation completed successfully"
+        return 0
+    elif [ "$rc" -eq 1 ]; then
+        OPERATION_STATUS="WARNING"
+        audit_log "$operation" "WARNING" "$details" "$(calculate_duration)"
+        log "WARN" "$operation completed with warnings (borg exit 1)"
+        return 0
+    fi
+
+    OPERATION_STATUS="FAILED"
+    audit_log "$operation" "FAILED" "$details" "$(calculate_duration)"
+    error "$operation failed (borg exit $rc)"
+    return "$rc"
+}
+
+# Build the retention arguments from the KEEP_* configuration.
+# Echoes the arguments; returns 1 when no retention rule is configured.
+build_retention_opts() {
+    local opts=()
+    local rule name value
+
+    for rule in "last:$KEEP_LAST" "hourly:$KEEP_HOURLY" "daily:$KEEP_DAILY" \
+                "weekly:$KEEP_WEEKLY" "monthly:$KEEP_MONTHLY" "yearly:$KEEP_YEARLY"; do
+        name="${rule%%:*}"
+        value="${rule#*:}"
+        if [ -n "$value" ] && [ "$value" != "0" ]; then
+            opts+=("--keep-${name}=${value}")
+        fi
+    done
+
+    if [ "${#opts[@]}" -eq 0 ]; then
+        return 1
+    fi
+
+    printf '%s\n' "${opts[@]}"
     return 0
-  fi
-
-  local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  echo "$timestamp | $operation | $status | $details | $duration" >> "$AUDIT_LOG_FILE"
 }
 
-############################################################################################################### Exclude list
-debug "############################################################################ EXCLUDE LIST\n";
-debug "Backup exclude: ${BACKUP_EXCL}\n";
+# ============================================================================
+# CONFIGURATION FUNCTIONS
+# ============================================================================
 
-IFS=';' read -ra EXCLUDE_LIST <<< "$BACKUP_EXCL"
-BORG_EXCLUDE=""
-for tmpEXCL in "${EXCLUDE_LIST[@]}"; do
-  BORG_EXCLUDE+=" --exclude '$tmpEXCL'"
-done
-unset tmpEXCL
-unset EXCLUDE_LIST
+show_help() {
+    cat << 'HELPTEXT'
+USAGE: tngbackup [OPERATION] [OPTIONS]
 
-debug "Generated exclude list: ${BORG_EXCLUDE}\n";
-############################################################################################################### Pre run Script
+OPERATIONS:
+  init              Initialize new Borg repository
+  backup            Create backup archive
+  list              List archives or archive contents
+  mount             Mount repository or archive
+  check             Verify repository/archive integrity
+  prune             Remove old archives per retention policy
+  compact           Reclaim repository space
+  info              Display repository statistics
+  delete            Delete specific archive (requires --archive)
+  extract           Restore files from archive (requires --archive --path)
+  break-lock        Remove stale repository lock (for troubleshooting)
 
-if [ ! -z "${PRERUN}" ]; then
-  debug "############################################################################ PRE-RUN\n";
-  PreRUN_Start=`date "+%s"`;
-  runCMD "${PRERUN}"
-  ((PreRUN_End=`date "+%s"`-PreRUN_Start));
-fi
+OPTIONS:
+  -c, --config FILE/DIR    Config file or directory (default: ~/.config/tngbackup.conf)
+  -r, --repo URI           Repository URI (overrides config)
+  -p, --passphrase PASS    Repository passphrase (overrides config)
+  --archive NAME           Archive name
+  --path PATH              Restore path (for extract)
+  --mountpoint PATH        Mount directory (default: /mnt/borg)
+  -l, --log FILE           Log file path
+  -V, --version            Show version and check for updates on GitHub
+  -h, --help               Show this help
 
-############################################################################################################### Check backup path
+CONFIGURATION PATHS:
+  Default:        ~/.config/tngbackup.conf
+  System batch:   /etc/tngbackup/ (processes all *.conf files)
+  Custom:         Use -c/--config to specify path or directory
 
-debug "############################################################################ BACKUP PATH\n";
-debug "Backup path/files: $BACKUP_PATH\n";
+EXAMPLES:
+  tngbackup                                           # Interactive menu
+  tngbackup -V                                        # Show version and check updates
+  tngbackup backup --config ~/.config/tngbackup.conf  # Single backup
+  tngbackup backup --config /etc/tngbackup/           # Batch mode (all *.conf files)
+  tngbackup list --archive backup-20250904            # List archive contents
+  tngbackup extract --archive backup-20250904 --path /home/user  # Restore
 
-BACKUP_ARR=($(echo "$BACKUP_PATH" | tr ";" "\n")) # There are more than one file/dir to backup?
-BORG_PATH=""
-BACKUP_NOTEXISTS=""
-for tmpPath in "${BACKUP_ARR[@]}"; do
-  if [[ -e "$tmpPath" ]]; then                    # Is it exists?
-    BORG_PATH+=" $tmpPath"
-  else
-    BACKUP_NOTEXISTS+=" $tmpPath"
-  fi
-done
-unset tmpPath
-unset BACKUP_ARR
+DOCUMENTATION:
+  Full guide:    https://github.com/RedFoxy/TNGBackup
+  Local docs:    README.md, docs/USAGE.md
+  Migration:     docs/MIGRATION_it.md (Italian), docs/MIGRATION_en.md (English)
 
-debug "Exists backup path/files: ${BORG_PATH}\n";
-debug "NOT exists backup path/files: ${BACKUP_NOTEXISTS}\n";
+Author: Massimo "RedFoxy Darrest" Cicciò
+License: CC BY-NC 4.0 (Non-Commercial) + Commercial License
+HELPTEXT
+}
 
-if [ "${BORG_PATH}" == "" ]; then
-  error "There are no files or directory to backup! ${BACKUP_PATH}";
-  exit 1;
-fi
+load_config() {
+    local config_file="$1"
 
-############################################################################################################### Local
-
-if [ $LOCAL == "y" ]; then                        # Backup on local repository?
-  debug "############################################################################\nBorg Local Backup";
-
-  if [ -n "${LOCAL_REPO}" ]; then
-    if [[ $BACKUP == "y" ]]; then
-      if [[ $SHOWTEXT == "y" ]]; then Local_preCheck_Start=`date "+%s"`; fi
-
-      runCMD "mkdir -p $LOCAL_REPO";
-      borg_info local
-      if [ ! -n "$RUN_OUT" ]; then
-        borg_init local
-      fi
-
-      if [[ $SHOWTEXT == "y" ]]; then
-        ((Local_preCheck_End=`date "+%s"`-Local_preCheck_Start));
-      fi
-    else
-      debug "Local backup skipped";
+    # Determine config path
+    if [ -z "$config_file" ]; then
+        config_file="$TNGB_CONFIG"
     fi
-  else
-    debug "LOCAL_REPO is empty: "${LOCAL_REPO};
-    error "Skip local backup...";
-    Local_SKIP=1;
-  fi
-else
-  Local_SKIP=1;
-fi
 
-############################################################################################################### Remote
-
-if [ $REMOTE == "y" ]; then                       # Backup on remote repository?
-  debug "############################################################################\nBorg Remote Backup";
-
-  if [ -n ${REMOTE_REPO} ]; then
-    if [[ ! $a == "/*" ]]; then
-      REMOTE_REPO="/"${REMOTE_REPO}
+    # If config is a directory, process batch mode
+    if [ -d "$config_file" ]; then
+        load_config_batch "$config_file"
+        return $?
     fi
-    if [ -n ${SSH_USER} ]; then                   # There is a username? If not exit...
-      if [ -n ${SSH_HOST} ]; then                 # There is an hostname? If not exit...
-        if [ -n ${SSH_CERT} ]; then               # Must I use a certificate?
-          if [ -f "${SSH_CERT}" ]; then           # Is it exist and I can read it?
-            if [ -r "${SSH_CERT}" ]; then         # Are you sure that I can read it?
-              SSHPASS="";
-              SSH_CMD="ssh -p $SSH_PORT -i $SSH_CERT $SSH_USER@$SSH_HOST";
-              Repo_RSH="ssh "${SSH_OPT}" -i "${SSH_CERT};
-              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT$REMOTE_REPO";
-            else
-              error "Certificate not readable!";
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            fi
-          else
-            error "Certificate not found!"
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          fi
-        else                                      # Password is the way!
-          if [ -n $SSH_PASS ]; then               # Have I a password?
-            if [ -z $(command -v sshpass) ]; then
-              error "Cannot find sshpass, please install it!"
-              error "Skip remote backup...";
-              Remote_SKIP=1;
-            else
-              SSHPASS="sshpass -p ${SSH_PASS} ";
-              SSH_CMD="${SSHPASS}ssh -p $SSH_PORT $SSH_USER@$SSH_HOST";
-              Repo_RSH="ssh "${SSH_OPT};
-              Repo_SSH="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT/$REMOTE_REPO";
-            fi
-          else
-            error "SSH Password not provided!";
-            error "Skip remote backup...";
-            Remote_SKIP=1;
-          fi
+
+    # Load single config file
+    if [ -f "$config_file" ]; then
+        debug "Loading config from: $config_file"
+        # Source in current shell (not subshell) to keep variables
+        source "$config_file" || {
+            error "Failed to load config: $config_file"
+            return 1
+        }
+    elif [ "$config_file" != "$TNGB_CONFIG" ]; then
+        # User specified a config file that doesn't exist
+        error "Config file not found: $config_file"
+        return 1
+    fi
+    # If default config doesn't exist, just skip (use env/args)
+
+    debug "Config loaded successfully"
+    return 0
+}
+
+load_config_batch() {
+    local config_dir="$1"
+    local count=0
+    local failed=0
+
+    debug "Processing batch directory: $config_dir"
+
+    # Process each .conf file in directory
+    for config_file in "$config_dir"/*.conf; do
+        [ -f "$config_file" ] || continue
+
+        log "INFO" "Processing: $config_file"
+
+        # Reset per-repository variables so settings never leak between configs
+        REPO_URI=""
+        REPO_PASSPHRASE=""
+        BACKUP_PATH=""
+        BACKUP_EXCLUDE=""
+        ARCHIVE_NAME=""
+
+        # Load this config
+        source "$config_file" || {
+            log "WARN" "Failed to load: $config_file, skipping"
+            continue
+        }
+
+        # Validate and execute operation. A failure on one config must not
+        # abort the whole batch.
+        if validate_config; then
+            dispatch_operation || {
+                failed=$((failed + 1))
+                log "WARN" "Operation '$OPERATION' failed for: $config_file"
+            }
+        else
+            failed=$((failed + 1))
+            log "WARN" "Config validation failed for: $config_file"
         fi
-      else
-        error "SSH Hostname not provided!";
-        error "Skip remote backup...";
-        Remote_SKIP=1;
-      fi
-    else
-      error "SSH Username not provided!";
-      error "Skip remote backup...";
-      Remote_SKIP=1;
+
+        count=$((count + 1))
+    done
+
+    log "INFO" "Batch processing complete: $count config(s) processed, $failed failed"
+
+    if [ "$failed" -gt 0 ]; then
+        return 1
     fi
+    return 0
+}
 
-    debug "Remote configuration:
-    SSHPASS : $SSHPASS
-    SSH_CMD : $SSH_CMD
-    Repo_RSH: $Repo_RSH
-    Repo_SSH: $Repo_SSH
-    ";
+# Dispatch OPERATION to the matching handler. Shared by single and batch mode.
+dispatch_operation() {
+    case "$OPERATION" in
+        init)        borg_init ;;
+        backup)      borg_backup ;;
+        list)        borg_list ;;
+        mount)       borg_mount ;;
+        check)       borg_check ;;
+        compact)     borg_compact ;;
+        prune)       borg_prune ;;
+        info)        borg_info ;;
+        delete)      borg_delete ;;
+        extract)     borg_extract ;;
+        break-lock)  borg_break_lock ;;
+        *)           error "Unknown operation: $OPERATION"; return 1 ;;
+    esac
+}
 
-    if [[ $BACKUP == "y" ]]; then
-      if [[ $SHOWTEXT == "y" ]]; then
-        Remote_preCheck_Start=`date "+%s"`;
-      fi
+check_version() {
+    echo "=================================="
+    echo "TNGBackup v$SCRIPT_VERSION"
+    echo "=================================="
+    echo "$SCRIPT_DESC"
+    echo ""
+    echo "Author:   $SCRIPT_AUTHOR"
+    echo "License:  $SCRIPT_LICENSE"
+    echo "GitHub:   https://github.com/RedFoxy/TNGBackup"
+    echo ""
+    echo "Checking for updates on GitHub..."
 
-      if [ $Remote_SKIP == 0 ]; then
-        runCMD "$SSH_CMD 'mkdir -p $REMOTE_REPO'";
-        borg_info remote
-        if [ ! -n "$RUN_OUT" ]; then
-          borg_init remote
+    # Try to fetch the latest version from GitHub API
+    if command -v curl &> /dev/null; then
+        local latest=$(curl -s "https://api.github.com/repos/RedFoxy/TNGBackup/releases/latest" 2>/dev/null | grep -o '"tag_name":"[^"]*' | cut -d'"' -f4 | sed 's/^v//' || echo "")
+        if [ -n "$latest" ]; then
+            if [ "$latest" != "$SCRIPT_VERSION" ]; then
+                echo "New version available: v$latest"
+                echo "Download: https://github.com/RedFoxy/TNGBackup/releases/latest"
+            else
+                echo "✓ You are running the latest version!"
+            fi
+        else
+            echo "Could not fetch version information from GitHub"
         fi
-      fi
-
-      if [[ $SHOWTEXT == "y" ]]; then
-        ((Remote_preCheck_End=`date "+%s"`-Remote_preCheck_Start));
-      fi
     else
-      debug "Remote backup skipped";
+        echo "curl not found - cannot check for updates"
+        echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
     fi
-  else
-    debug "REMOTE_REPO is empty: "${REMOTE_REPO};
-    error "Skip remote backup...";
-    Remote_SKIP=1;
-  fi
-else
-  Remote_SKIP=1;
-fi
+}
 
-###############################################################################################################
-###############################################################################################################
-if [[ $Local_SKIP > 0 ]] && [[ $Remote_SKIP > 0 ]]; then
-  echo "Too much errors, unable to run backup."
-  exit 1;
-fi
-###############################################################################################################
-###############################################################################################################
+parse_cli_args() {
+    # Pre-process arguments to handle -p without value (interactive passphrase)
+    local new_args=()
+    local i=1
+    local skip_next=0
 
-if [ $SHOWTEXT == "y" ]; then
-  echo "############################################################################";
-  log "Backup Unique ID" ${Backup_UID};
-  echo "#";
-  log "Path to backup" "${BORG_PATH}";
-  log "Path not found" ${BACKUP_NOTEXISTS};
-  log "Pattern to Exclude" ${BACKUP_EXCL};
-  echo "#";
-  echo "# Repository:";
-  if [ $LOCAL == "y" ]; then
-    log "- Local" ${LOCAL_REPO};
-  fi
-  if [ $REMOTE == "y" ]; then
-    log "- Remote" ${REMOTE_REPO};
-  fi
-  echo "#";
-fi
+    for arg in "$@"; do
+        if [ "$skip_next" -eq 1 ]; then
+            skip_next=0
+            new_args+=("$arg")
+            ((i++))
+            continue
+        fi
 
-if [ ! -z "${PRERUN}" ]; then
-  log -d $PreRUN_Start "Pre-run script";
-  finished_after $PreRUN_End
-  echo "#";
-fi
+        if [ "$arg" = "-p" ] || [ "$arg" = "--passphrase" ]; then
+            # Check if next argument exists and is not an option
+            if [ $((i + 1)) -le $# ]; then
+                eval "next_arg=\${$((i + 1))}"
+                if [[ "$next_arg" == -* ]]; then
+                    # Next is an option, so -p has no value: use placeholder
+                    new_args+=("$arg" "__INTERACTIVE_PASSPHRASE__")
+                else
+                    # Next is a value: let getopt handle it normally
+                    new_args+=("$arg")
+                    skip_next=1
+                fi
+            else
+                # Last argument: -p has no value: use placeholder
+                new_args+=("$arg" "__INTERACTIVE_PASSPHRASE__")
+            fi
+        else
+            new_args+=("$arg")
+        fi
+        ((i++))
+    done
 
-################### Local
+    # Parse arguments with getopt
+    local opts
+    opts=$(getopt -o c:r:p:l:hV \
+        --long config:,repo:,passphrase:,archive:,path:,mountpoint:,log:,audit-log:,help,version \
+        -n "tngbackup" -- "${new_args[@]}") || {
+        show_help
+        exit 1
+    }
 
-if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ]; then
-  if [ $SHOWTEXT == "y" ]; then
-    echo "# Local:";
-    log -d $Local_preCheck_Start "- Config check";
-    finished_after $Local_preCheck_End
-  fi
+    eval set -- "$opts"
 
-  if [[ $CHECK == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
-    borg_check local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    local path_arg=""
 
-  if [[ $PRUNE == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
-    borg_prune local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    while true; do
+        case "$1" in
+            -c|--config)
+                TNGB_CONFIG="$2"
+                shift 2
+                ;;
+            -r|--repo)
+                REPO_URI="$2"
+                shift 2
+                ;;
+            -p|--passphrase)
+                if [ "$2" = "__INTERACTIVE_PASSPHRASE__" ]; then
+                    # Interactive passphrase input (hidden)
+                    read -s -p "Repository passphrase: " REPO_PASSPHRASE
+                    echo ""  # New line after silent input
+                else
+                    REPO_PASSPHRASE="$2"
+                fi
+                shift 2
+                ;;
+            --archive)
+                ARCHIVE_NAME="$2"
+                shift 2
+                ;;
+            --path)
+                path_arg="$2"
+                shift 2
+                ;;
+            --mountpoint)
+                MOUNT_PATH="$2"
+                shift 2
+                ;;
+            -l|--log)
+                LOG_FILE="$2"
+                # Create log file with restricted permissions
+                touch "$LOG_FILE"
+                chmod 600 "$LOG_FILE"
+                shift 2
+                ;;
+            --audit-log)
+                AUDIT_LOG_FILE="$2"
+                touch "$AUDIT_LOG_FILE"
+                chmod 600 "$AUDIT_LOG_FILE"
+                shift 2
+                ;;
+            -V|--version)
+                check_version
+                exit 0
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                error "Invalid option: $1"
+                exit 1
+                ;;
+        esac
+    done
 
-  if [[ $COMPACT == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
-    borg_compact local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    # First positional argument is operation (if provided)
+    if [ $# -gt 0 ]; then
+        OPERATION="$1"
+    fi
 
-  if [[ $BACKUP == "y" ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
+    # Map --path argument to appropriate variable based on operation
+    if [ -n "$path_arg" ]; then
+        case "$OPERATION" in
+            backup) BACKUP_PATH="$path_arg" ;;
+            extract) RESTORE_PATH="$path_arg" ;;
+            *) RESTORE_PATH="$path_arg" ;;
+        esac
+    fi
 
-   borg_create local
+    debug "CLI parsing complete: OPERATION=$OPERATION"
+}
 
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+validate_config() {
+    local required_vars=("REPO_URI" "REPO_PASSPHRASE")
 
-  if [[ $CHECK == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
-    borg_check local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    # Check required variables
+    for var in "${required_vars[@]}"; do
+        if [ -z "${!var:-}" ]; then
+            error "Missing required configuration: $var"
+            return 1
+        fi
+    done
 
-  if [[ $PRUNE == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
-    borg_prune local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    # Check borg binary
+    if ! command -v borg &>/dev/null; then
+        error "borg binary not found in PATH"
+        return 1
+    fi
 
-  if [[ $COMPACT == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
-    borg_compact local
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
-fi
+    # For backup operation, check BACKUP_PATH
+    if [ "$OPERATION" = "backup" ] && [ -z "$BACKUP_PATH" ]; then
+        error "BACKUP_PATH not set; no files to backup"
+        return 1
+    fi
 
-###############################################################################################################
+    debug "Configuration validated successfully"
+    return 0
+}
 
-if [ $LOCAL == "y" ] && [ $Local_SKIP == 0 ] && [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then echo "#"; fi
+# ============================================================================
+# MENU FUNCTIONS
+# ============================================================================
 
-################### Remote
+show_menu() {
+    echo ""
+    echo "╔═══════════════════════════════════╗"
+    echo "║      TNGBackup v2.0.0             ║"
+    echo "╚═══════════════════════════════════╝"
+    echo ""
+    echo "  1) Initialize repository"
+    echo "  2) Backup"
+    echo "  3) List archives"
+    echo "  4) Mount archive"
+    echo "  5) Check repository"
+    echo "  6) Prune old archives"
+    echo "  7) Compact repository"
+    echo "  8) Repository info"
+    echo "  9) Extract files"
+    echo " 10) Delete archive"
+    echo ""
+    echo "  0) Exit (default)"
+    echo ""
+    read -p "Select [0-10]: " choice
+    choice="${choice:-0}"
 
-if [ $REMOTE == "y" ] && [ $Remote_SKIP == 0 ]; then
-  if [ $SHOWTEXT == "y" ]; then
-    echo "# Remote:";
-    log -d $Remote_preCheck_Start "- Config check";
-    finished_after $Remote_preCheck_End
-  fi
+    case "$choice" in
+        0)  echo "Exiting..."; exit 0 ;;
+        1)  OPERATION="init" ;;
+        2)  OPERATION="backup" ;;
+        3)  OPERATION="list" ;;
+        4)  OPERATION="mount" ;;
+        5)  OPERATION="check" ;;
+        6)  OPERATION="prune" ;;
+        7)  OPERATION="compact" ;;
+        8)  OPERATION="info" ;;
+        9)  OPERATION="extract" ;;
+        10) OPERATION="delete" ;;
+        *)  error "Invalid selection"; show_menu ;;
+    esac
 
-  if [[ $PRUNE == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
-    borg_prune remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    debug "Menu selection: $choice -> $OPERATION"
+}
 
-  if [[ $CHECK == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
-    borg_check remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+# ============================================================================
+# BORG OPERATIONS
+# ============================================================================
 
-  if [[ $COMPACT == 1 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
-    borg_compact remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+calculate_duration() {
+    local end_time=$(date +%s)
+    echo $((end_time - START_TIME))
+}
 
-  if [[ $BACKUP == "y" ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Backup"; fi
-    borg_create remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+audit_log() {
+    local operation="$1"
+    local status="$2"
+    local details="$3"
+    local duration="$4"
 
-  if [[ $CHECK == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Check"; fi
-    borg_check remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    # Return silently if audit log not configured
+    if [ -z "$AUDIT_LOG_FILE" ]; then
+        return 0
+    fi
 
-  if [[ $PRUNE == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Prune"; fi
-    borg_prune remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "$timestamp | $operation | $status | $details | $duration" >> "$AUDIT_LOG_FILE"
+}
 
-  if [[ $COMPACT == 2 ]]; then
-    if [ $SHOWTEXT == "y" ]; then Step_Start=`date "+%s"`; log -n "- Compact"; fi
-    borg_compact remote
-    if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-  fi
-fi
+borg_break_lock() {
+    log "INFO" "Breaking stale repository lock: $REPO_URI"
 
-unset BORG_RSH;
-unset BORG_PASSPHRASE;
-unset BORG_REPO;
+    if [ -z "$REPO_URI" ] || [ -z "$REPO_PASSPHRASE" ]; then
+        error "Missing REPO_URI or REPO_PASSPHRASE"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
 
-################### Post run Script
+    setup_borg_env
+    run_borg break-lock "$REPO_URI" 2>&1 | tee_log
+    local rc=$?
 
-if [ ! -z "${POSTRUN}" ]; then
-  Step_Start=`date "+%s"`;
-  if [ $SHOWTEXT == "y" ]; then
-    echo "#";
-    log -n "Post-run script"
-  fi
+    finish_operation "break-lock" "$rc" "$REPO_URI"
+    return $?
+}
 
-  runCMD "${POSTRUN}"
+borg_init() {
+    log "INFO" "Initializing repository: $REPO_URI"
 
-  if [ $SHOWTEXT == "y" ]; then ((Step_End=`date "+%s"`-Step_Start)); finished_after $Step_End; fi
-fi
+    if [ -z "$REPO_URI" ] || [ -z "$REPO_PASSPHRASE" ]; then
+        error "Missing REPO_URI or REPO_PASSPHRASE"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
 
-if [ $SHOWTEXT == "y" ]; then
-  echo "#";
-  log -n "Backup end";
-  ((Backup_End=`date "+%s"`-Backup_Start));
-  finished_after $Backup_End;
-  echo "############################################################################";
-fi
+    setup_borg_env
+
+    local rc=0
+    run_borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI" || rc=$?
+
+    finish_operation "init" "$rc" "$REPO_URI"
+}
+
+borg_backup() {
+    log "INFO" "Starting backup from: $BACKUP_PATH"
+
+    if [ -z "$BACKUP_PATH" ]; then
+        error "BACKUP_PATH not set"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    # Generate archive name if not provided
+    if [ -z "$ARCHIVE_NAME" ]; then
+        ARCHIVE_NAME="archive-$(date +%Y%m%d-%H%M%S)"
+    fi
+
+    setup_borg_env
+
+    # Build the argument list as an array: no eval, no quoting surprises,
+    # and paths containing spaces are handled correctly.
+    local args=()
+
+    # BORG_OPT is intentionally word-split: it holds user supplied flags.
+    if [ -n "$BORG_OPT" ]; then
+        # shellcheck disable=SC2206
+        args+=($BORG_OPT)
+    fi
+
+    # BACKUP_EXCLUDE is a semicolon separated list of patterns
+    if [ -n "$BACKUP_EXCLUDE" ]; then
+        local exclude_list=()
+        IFS=';' read -ra exclude_list <<< "$BACKUP_EXCLUDE"
+        local exclude_item
+        for exclude_item in "${exclude_list[@]}"; do
+            if [ -n "$exclude_item" ]; then
+                args+=(--exclude "$exclude_item")
+            fi
+        done
+    fi
+
+    args+=("::$ARCHIVE_NAME")
+
+    # BACKUP_PATH may list several space separated paths
+    # shellcheck disable=SC2206
+    local backup_targets=($BACKUP_PATH)
+    args+=("${backup_targets[@]}")
+
+    local rc=0
+    run_borg create "${args[@]}" || rc=$?
+
+    finish_operation "backup" "$rc" "$ARCHIVE_NAME"
+}
+
+borg_list() {
+    setup_borg_env
+
+    local rc=0
+    local details="all-archives"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        log "INFO" "Listing contents of archive: $ARCHIVE_NAME"
+        details="$ARCHIVE_NAME"
+        run_borg list "::$ARCHIVE_NAME" || rc=$?
+    else
+        log "INFO" "Listing all archives in repository"
+        run_borg list || rc=$?
+    fi
+
+    finish_operation "list" "$rc" "$details"
+}
+
+borg_check() {
+    log "INFO" "Checking repository: $REPO_URI"
+
+    setup_borg_env
+
+    local rc=0
+    local details="repository"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        details="$ARCHIVE_NAME"
+        run_borg check "::$ARCHIVE_NAME" || rc=$?
+    else
+        run_borg check --repository-only || rc=$?
+    fi
+
+    finish_operation "check" "$rc" "$details"
+}
+
+borg_prune() {
+    log "INFO" "Pruning repository: $REPO_URI"
+
+    setup_borg_env
+
+    local retention=()
+    mapfile -t retention < <(build_retention_opts || true)
+
+    if [ "${#retention[@]}" -eq 0 ]; then
+        error "No retention policy configured (set at least one of KEEP_LAST, KEEP_HOURLY, KEEP_DAILY, KEEP_WEEKLY, KEEP_MONTHLY, KEEP_YEARLY)"
+        OPERATION_STATUS="FAILED"
+        audit_log "prune" "FAILED" "no retention policy" "$(calculate_duration)"
+        return 1
+    fi
+
+    debug "Retention policy: ${retention[*]}"
+
+    local rc=0
+    run_borg prune --list "${retention[@]}" || rc=$?
+
+    finish_operation "prune" "$rc" "${retention[*]}"
+}
+
+borg_compact() {
+    log "INFO" "Compacting repository: $REPO_URI"
+
+    setup_borg_env
+
+    local rc=0
+    run_borg compact || rc=$?
+
+    finish_operation "compact" "$rc" "$REPO_URI"
+}
+
+borg_info() {
+    setup_borg_env
+
+    local rc=0
+    local details="repository"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        log "INFO" "Retrieving info for archive: $ARCHIVE_NAME"
+        details="$ARCHIVE_NAME"
+        run_borg info "::$ARCHIVE_NAME" || rc=$?
+    else
+        log "INFO" "Retrieving repository info: $REPO_URI"
+        run_borg info || rc=$?
+    fi
+
+    finish_operation "info" "$rc" "$details"
+}
+
+borg_mount() {
+    if [ -z "$MOUNT_PATH" ]; then
+        error "MOUNT_PATH not set (use --mountpoint)"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    setup_borg_env
+
+    # Create the mountpoint if it does not exist yet
+    if [ ! -d "$MOUNT_PATH" ]; then
+        debug "Creating mountpoint: $MOUNT_PATH"
+        if [ "$DRYRUN" != "y" ]; then
+            mkdir -p "$MOUNT_PATH" || {
+                error "Cannot create mountpoint: $MOUNT_PATH"
+                OPERATION_STATUS="FAILED"
+                return 1
+            }
+        fi
+    fi
+
+    local rc=0
+    local details="$MOUNT_PATH"
+
+    if [ -n "$ARCHIVE_NAME" ]; then
+        log "INFO" "Mounting archive $ARCHIVE_NAME on $MOUNT_PATH"
+        details="$ARCHIVE_NAME -> $MOUNT_PATH"
+        run_borg mount "::$ARCHIVE_NAME" "$MOUNT_PATH" || rc=$?
+    else
+        log "INFO" "Mounting repository on $MOUNT_PATH"
+        run_borg mount "$REPO_URI" "$MOUNT_PATH" || rc=$?
+    fi
+
+    if [ "$rc" -eq 0 ]; then
+        log "INFO" "Unmount with: borg umount $MOUNT_PATH"
+        # The cleanup trap must not unmount what the user just asked for.
+        MOUNT_PATH=""
+    fi
+
+    finish_operation "mount" "$rc" "$details"
+}
+
+borg_delete() {
+    if [ -z "$ARCHIVE_NAME" ]; then
+        error "delete requires --archive NAME"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    log "INFO" "Deleting archive: $ARCHIVE_NAME"
+
+    setup_borg_env
+
+    local rc=0
+    run_borg delete "::$ARCHIVE_NAME" || rc=$?
+
+    finish_operation "delete" "$rc" "$ARCHIVE_NAME"
+}
+
+borg_extract() {
+    if [ -z "$ARCHIVE_NAME" ]; then
+        error "extract requires --archive NAME"
+        OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    setup_borg_env
+
+    # borg extract always restores relative to the current directory
+    local target="${RESTORE_PATH:-$PWD}"
+
+    if [ ! -d "$target" ]; then
+        debug "Creating restore directory: $target"
+        if [ "$DRYRUN" != "y" ]; then
+            mkdir -p "$target" || {
+                error "Cannot create restore path: $target"
+                OPERATION_STATUS="FAILED"
+                return 1
+            }
+        fi
+    fi
+
+    log "INFO" "Extracting archive $ARCHIVE_NAME into $target"
+
+    local rc=0
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] (cd $target && borg extract ::$ARCHIVE_NAME)"
+    else
+        (
+            cd "$target" || exit 1
+            borg extract "::$ARCHIVE_NAME" < /dev/null 2>&1
+        ) | tee_log || rc=$?
+    fi
+
+    finish_operation "extract" "$rc" "$ARCHIVE_NAME -> $target"
+}
+
+# ============================================================================
+# CLEANUP FUNCTIONS
+# ============================================================================
+
+cleanup() {
+    debug "Executing cleanup..."
+
+    # Unset all credential variables
+    unset REPO_URI REPO_PASSPHRASE BACKUP_PATH
+    unset TNGB_REPO_URI TNGB_PASSPHRASE TNGB_BACKUP_PATH
+    unset BORG_PASSPHRASE BORG_RSH
+
+    # Destroy temp config (if created)
+    if [ -n "$TEMP_CONFIG" ] && [ -f "$TEMP_CONFIG" ]; then
+        shred -vfz -n 3 "$TEMP_CONFIG" 2>/dev/null || rm -f "$TEMP_CONFIG"
+        debug "Temp config destroyed"
+    fi
+
+    # Umount any Borg mounts (graceful)
+    if [ -n "$MOUNT_PATH" ] && mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
+        debug "Unmounting: $MOUNT_PATH"
+        borg umount "$MOUNT_PATH" 2>/dev/null || true
+    fi
+
+    debug "Cleanup complete"
+}
+
+# Install trap handlers
+trap cleanup EXIT
+trap cleanup INT
+trap cleanup TERM
+
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
+
+main() {
+    START_TIME=$(date +%s)
+
+    # Parse CLI arguments
+    parse_cli_args "$@"
+
+    # If no operation was given, check if config exists:
+    # - If config doesn't exist: show help (guidance for new users)
+    # - If config exists: show interactive menu
+    if [ -z "$OPERATION" ]; then
+        if [ ! -e "$TNGB_CONFIG" ] && [ ! -d "$TNGB_CONFIG" ]; then
+            # No config file/directory found and no operation specified: show help
+            show_help
+            exit 0
+        fi
+        # Config exists: show interactive menu
+        show_menu
+    fi
+
+    # CLI overrides must survive the config file, which is sourced afterwards.
+    local cli_repo="$REPO_URI"
+    local cli_passphrase="$REPO_PASSPHRASE"
+
+    # Load configuration (file/directory). A directory triggers batch mode and
+    # runs the operation for every config it contains.
+    local rc=0
+    if [ -d "$TNGB_CONFIG" ]; then
+        load_config "$TNGB_CONFIG" || rc=$?
+        local end_time=$(date +%s)
+        log "INFO" "Batch run completed in $((end_time - START_TIME))s"
+        exit "$rc"
+    fi
+
+    if ! load_config "$TNGB_CONFIG"; then
+        error "Failed to load configuration"
+        exit 1
+    fi
+
+    # Re-apply the CLI overrides on top of the config file values
+    if [ -n "$cli_repo" ]; then
+        REPO_URI="$cli_repo"
+    fi
+    if [ -n "$cli_passphrase" ]; then
+        REPO_PASSPHRASE="$cli_passphrase"
+    fi
+
+    # Validate configuration
+    if ! validate_config; then
+        error "Configuration validation failed"
+        exit 1
+    fi
+
+    # Execute operation
+    dispatch_operation || rc=$?
+
+    # Record operation status
+    local end_time=$(date +%s)
+    local duration=$((end_time - START_TIME))
+    log "INFO" "Operation '$OPERATION' finished with status ${OPERATION_STATUS:-UNKNOWN} in ${duration}s"
+
+    exit "$rc"
+}
+
+main "$@"

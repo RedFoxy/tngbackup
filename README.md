@@ -1,4 +1,4 @@
-# TNGBackup v2.0.0 — The Next Generation Borg Backup
+# TNGBackup v2.0.1 — The Next Generation Borg Backup
 
 **Multi-language documentation:** [Italiano](#-italiano) | [English](#-english)
 
@@ -10,7 +10,7 @@
 
 TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup**. Semplifica operazioni complesse come backup locali e remoti, verifiche di integrità, gestione della conservazione, montaggio archivi e ripristino selettivo di file — il tutto da un'unica interfaccia.
 
-**Versione:** 2.0.0  
+**Versione:** 2.0.1  
 **Licenza:** CC BY-NC 4.0 (Non-Commerciale) + Commercial License  
 **Requisiti:** Bash 4.0+, Borg Backup 1.2+
 
@@ -18,6 +18,7 @@ TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup
 
 - **10 Operazioni Borg:** init, backup, list, mount, check, compact, prune, info, delete, extract
 - **Menu Interattivo:** Scegli l'operazione senza ricordare i comandi
+- **Backup Hooks:** PRERUN (pre-backup) e POSTRUN (post-backup) per dump DB, cleanup, notifiche
 - **Modalità Batch:** Elabora molteplici config da una cartella sequenzialmente
 - **Configurazione Flessibile:** File di config, variabili di ambiente, o parametri CLI
 - **Precedenza Config:** CLI > File di Config > Variabili d'Ambiente > Default
@@ -44,6 +45,14 @@ bash tngbackup --config /etc/tngbackup/
 # → Elabora automaticamente tutti i file *.conf nella cartella
 ```
 
+#### 4. Controlla la Versione e gli Aggiornamenti
+```bash
+bash tngbackup -V
+# o
+bash tngbackup --version
+# → Mostra la versione attuale e controlla GitHub per aggiornamenti disponibili
+```
+
 ### Operazioni Disponibili
 
 | Operazione | Descrizione |
@@ -58,6 +67,7 @@ bash tngbackup --config /etc/tngbackup/
 | `compact` | Recuperare spazio nel repository |
 | `info` | Mostrare statistiche repository/archivi |
 | `delete` | Eliminare archivi specifici |
+| `break-lock` | Rimuovere lock stantio (troubleshooting) |
 
 ### Configurazione
 
@@ -134,7 +144,7 @@ ps aux | grep tngbackup
 
 TNGBackup is a unified management tool for **Borg Backup** operations. It simplifies complex tasks like local and remote backups, integrity verification, retention management, archive mounting, and selective file recovery — all from a single interface.
 
-**Version:** 2.0.0  
+**Version:** 2.0.1  
 **License:** CC BY-NC 4.0 (Non-Commercial) + Commercial License  
 **Requirements:** Bash 4.0+, Borg Backup 1.2+
 
@@ -142,6 +152,7 @@ TNGBackup is a unified management tool for **Borg Backup** operations. It simpli
 
 - **10 Borg Operations:** init, backup, list, mount, check, compact, prune, info, delete, extract
 - **Interactive Menu:** Choose operations without memorizing commands
+- **Backup Hooks:** PRERUN (pre-backup) and POSTRUN (post-backup) for DB dumps, cleanup, notifications
 - **Batch Mode:** Process multiple configs from a directory sequentially
 - **Flexible Configuration:** Config file, environment variables, or CLI arguments
 - **Config Precedence:** CLI > Config File > Environment Variables > Defaults
@@ -168,6 +179,14 @@ bash tngbackup --config /etc/tngbackup/
 # → Automatically process all *.conf files in directory
 ```
 
+#### 4. Check Version and Updates
+```bash
+bash tngbackup -V
+# or
+bash tngbackup --version
+# → Display current version and check GitHub for available updates
+```
+
 ### Available Operations
 
 | Operation | Description |
@@ -182,6 +201,7 @@ bash tngbackup --config /etc/tngbackup/
 | `compact` | Reclaim space in repository |
 | `info` | Show repository/archive statistics |
 | `delete` | Delete specific archives |
+| `break-lock` | Remove stale lock (troubleshooting) |
 
 ### Configuration
 
@@ -254,8 +274,12 @@ ps aux | grep tngbackup
 
 ## 📚 Documentation
 
+- **Changelog:** `CHANGELOG.md` (version history and updates)
 - **Configuration Examples:** `docs/examples/` (local, remote, batch configs)
 - **Detailed Usage Guide:** `docs/USAGE.md`
+- **Migration from v0.8.8:** 
+  - Italiano: `docs/MIGRATION_it.md`
+  - English: `docs/MIGRATION_en.md`
 - **Man Page:** `docs/tngbackup.1` (installed by `install.sh`)
 - **Systemd Units:** `docs/tngbackup.service`, `docs/tngbackup.timer`
 - **Tests:** `tests/dispatch-test.sh` (no Borg needed), `tests/integration-test.sh`
@@ -266,7 +290,7 @@ ps aux | grep tngbackup
 
 ### Non-Commercial Use (CC BY-NC 4.0)
 - **Free** to use, modify, and distribute for non-commercial projects
-- Attribution to RedFoxy Darrest required
+- Attribution to Massimo "RedFoxy Darrest" Cicciò required
 - Commercial use prohibited without explicit permission
 
 **License Terms:**
@@ -289,4 +313,4 @@ Suggestions and improvements are welcome. Fork the repository and submit pull re
 ---
 
 **Last Updated:** September 2026  
-**Maintained by:** RedFoxy Darrest
+**Maintained by:** Massimo "RedFoxy Darrest" Cicciò
