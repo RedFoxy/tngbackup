@@ -358,7 +358,6 @@ check_version() {
     echo "License:  $SCRIPT_LICENSE"
     echo "GitHub:   https://github.com/RedFoxy/TNGBackup"
     echo ""
-    echo "Checking for updates on GitHub..."
 
     # Try to fetch the latest version from GitHub API
     if ! command -v curl &> /dev/null; then
@@ -376,11 +375,16 @@ check_version() {
         return 0
     fi
 
-    # Try to parse with jq if available (more robust)
+    # Try to parse with jq if available (most robust)
     local latest=""
+    local used_jq=0
+
     if command -v jq &> /dev/null; then
+        echo "Checking for updates on GitHub (using jq)..."
         latest=$(echo "$response" | jq -r '.tag_name' 2>/dev/null | sed 's/^v//')
+        used_jq=1
     else
+        echo "Checking for updates on GitHub (using grep)..."
         # Fallback to grep parsing - multiple attempts for robustness
         latest=$(echo "$response" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' 2>/dev/null | sed 's/^v//' | head -1)
         if [ -z "$latest" ]; then
@@ -390,17 +394,34 @@ check_version() {
     fi
 
     if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-        echo "Could not parse GitHub response (API may be rate-limited)"
-        echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        if [ "$used_jq" -eq 0 ]; then
+            echo "Could not parse GitHub response with grep"
+            echo "Install 'jq' package for automatic online version checking:"
+            echo "  apt install jq          # Debian/Ubuntu"
+            echo "  yum install jq          # RedHat/CentOS"
+            echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        else
+            echo "Could not parse GitHub response (API may be rate-limited)"
+            echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        fi
         return 0
     fi
 
-    # Compare versions
-    if [ "$latest" != "$SCRIPT_VERSION" ]; then
+    # Compare versions numerically (e.g., 2.0.2 vs 2.0.1)
+    # sort -V sorts in ascending order, so head -n1 gives the older version
+    local first=$(printf '%s\n' "$latest" "$SCRIPT_VERSION" | sort -V | head -n1)
+
+    if [ "$first" = "$latest" ]; then
+        # latest is older or equal → $SCRIPT_VERSION is newer or equal
+        if [ "$latest" = "$SCRIPT_VERSION" ]; then
+            echo "✓ You are running the latest version!"
+        else
+            echo "✓ You are running v$SCRIPT_VERSION (newer than latest on GitHub: v$latest)!"
+        fi
+    else
+        # $SCRIPT_VERSION is older → $latest is newer
         echo "New version available: v$latest"
         echo "Download: https://github.com/RedFoxy/TNGBackup/releases/latest"
-    else
-        echo "✓ You are running the latest version!"
     fi
 }
 
