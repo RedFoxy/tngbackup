@@ -4,6 +4,19 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.2] — 2026-09-06
+
+### Fixed
+
+- **Version Check Robustness:** Improved GitHub API parsing to handle edge cases
+  - Add 5-second timeout to curl request to prevent blocking
+  - Use `jq` for robust JSON parsing if available
+  - Fallback to improved grep pattern for systems without `jq`
+  - Better error messages for network/API issues (rate-limiting, connection failures)
+  - Handle edge cases (empty responses, null values)
+
+---
+
 ## [2.0.1] — 2026-09-06
 
 ### Added
