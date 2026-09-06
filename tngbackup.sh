@@ -361,21 +361,42 @@ check_version() {
     echo "Checking for updates on GitHub..."
 
     # Try to fetch the latest version from GitHub API
-    if command -v curl &> /dev/null; then
-        local latest=$(curl -s "https://api.github.com/repos/RedFoxy/TNGBackup/releases/latest" 2>/dev/null | grep -o '"tag_name":"[^"]*' | cut -d'"' -f4 | sed 's/^v//' || echo "")
-        if [ -n "$latest" ]; then
-            if [ "$latest" != "$SCRIPT_VERSION" ]; then
-                echo "New version available: v$latest"
-                echo "Download: https://github.com/RedFoxy/TNGBackup/releases/latest"
-            else
-                echo "✓ You are running the latest version!"
-            fi
-        else
-            echo "Could not fetch version information from GitHub"
-        fi
-    else
+    if ! command -v curl &> /dev/null; then
         echo "curl not found - cannot check for updates"
         echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        return 0
+    fi
+
+    # Fetch GitHub API response with timeout
+    local response=$(curl -s --max-time 5 "https://api.github.com/repos/RedFoxy/TNGBackup/releases/latest" 2>/dev/null)
+
+    if [ -z "$response" ]; then
+        echo "Could not reach GitHub (check your internet connection)"
+        echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        return 0
+    fi
+
+    # Try to parse with jq if available (more robust)
+    local latest=""
+    if command -v jq &> /dev/null; then
+        latest=$(echo "$response" | jq -r '.tag_name' 2>/dev/null | sed 's/^v//')
+    else
+        # Fallback to grep parsing with multiple patterns
+        latest=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*' | head -1 | sed 's/.*"\([^"]*\)".*/\1/' | sed 's/^v//')
+    fi
+
+    if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+        echo "Could not parse GitHub response (API may be rate-limited)"
+        echo "Manual check: https://github.com/RedFoxy/TNGBackup/releases"
+        return 0
+    fi
+
+    # Compare versions
+    if [ "$latest" != "$SCRIPT_VERSION" ]; then
+        echo "New version available: v$latest"
+        echo "Download: https://github.com/RedFoxy/TNGBackup/releases/latest"
+    else
+        echo "✓ You are running the latest version!"
     fi
 }
 
