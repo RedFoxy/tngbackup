@@ -4,6 +4,14 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.4] — 2026-09-09
+
+### Fixed
+
+- **Version Check Logic:** Update the script version metadata to 2.0.4 and make the interactive menu banner render the current SCRIPT_VERSION instead of a stale hardcoded value. This keeps the UI consistent with the release version.
+
+---
+
 ## [2.0.3] — 2026-09-06
 
 ### Fixed
