@@ -5,7 +5,7 @@
 # SCRIPT METADATA
 #
 SCRIPT_NAME="tngbackup"
-SCRIPT_VERSION="2.0.3"
+SCRIPT_VERSION="2.0.4"
 SCRIPT_DESC="The Next Generation Borg Backup management utility"
 SCRIPT_AUTHOR="Massimo \"RedFoxy Darrest\" Cicciò"
 SCRIPT_LICENSE="CC BY-NC 4.0 (Non-Commercial) + Commercial License"
@@ -589,7 +589,7 @@ validate_config() {
 show_menu() {
     echo ""
     echo "╔═══════════════════════════════════╗"
-    echo "║      TNGBackup v2.0.0             ║"
+    echo "║      TNGBackup v${SCRIPT_VERSION}             ║"
     echo "╚═══════════════════════════════════╝"
     echo ""
     echo "  1) Initialize repository"
