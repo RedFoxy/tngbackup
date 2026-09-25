@@ -17,7 +17,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TNGBACKUP="${TNGBACKUP:-$REPO_ROOT/tngbackup}"
+TNGBACKUP="${TNGBACKUP:-$REPO_ROOT/tngbackup.sh}"
 
 PASSED=0
 FAILED=0
@@ -209,6 +209,72 @@ if grep -q "| backup | WARNING |" "$AUDIT" 2>/dev/null; then
     pass "warnings are recorded in the audit log"
 else
     failed "audit WARNING record" "no WARNING backup record in $AUDIT"
+fi
+
+# --- backup hooks (PRERUN/POSTRUN) ------------------------------------------
+
+echo ""
+echo "=== Backup hooks ==="
+
+HOOK_CONFIG="$WORKDIR/hooks.conf"
+PRERUN_MARKER="$WORKDIR/prerun.marker"
+POSTRUN_MARKER="$WORKDIR/postrun.marker"
+
+cat > "$HOOK_CONFIG" <<EOF
+REPO_URI="$WORKDIR/repo"
+REPO_PASSPHRASE="secret-passphrase"
+BACKUP_PATH="$WORKDIR/data"
+KEEP_LAST="5"
+SHOWTEXT="n"
+PRERUN="touch $PRERUN_MARKER"
+POSTRUN="touch $POSTRUN_MARKER"
+EOF
+
+rm -f "$PRERUN_MARKER" "$POSTRUN_MARKER"
+if "$TNGBACKUP" backup --config "$HOOK_CONFIG" >/dev/null 2>&1 \
+    && [ -f "$PRERUN_MARKER" ] && [ -f "$POSTRUN_MARKER" ]; then
+    pass "PRERUN and POSTRUN both run around a successful backup"
+else
+    failed "PRERUN/POSTRUN execution" "one or both hook markers were not created"
+fi
+
+cat > "$HOOK_CONFIG" <<EOF
+REPO_URI="$WORKDIR/repo"
+REPO_PASSPHRASE="secret-passphrase"
+BACKUP_PATH="$WORKDIR/data"
+KEEP_LAST="5"
+SHOWTEXT="n"
+PRERUN="exit 3"
+EOF
+
+: > "$CALLS"
+if "$TNGBACKUP" backup --config "$HOOK_CONFIG" --audit-log "$AUDIT" >/dev/null 2>&1; then
+    failed "PRERUN failure aborts backup" "tngbackup exited 0 despite a failing PRERUN"
+elif [ -s "$CALLS" ]; then
+    failed "PRERUN failure aborts backup" "borg was invoked even though PRERUN failed"
+else
+    pass "a failing PRERUN aborts the backup before borg runs"
+fi
+
+if grep -q "| backup | FAILED | PRERUN hook failed |" "$AUDIT" 2>/dev/null; then
+    pass "PRERUN failure is recorded in the audit log"
+else
+    failed "PRERUN audit record" "no PRERUN failure record in $AUDIT"
+fi
+
+cat > "$HOOK_CONFIG" <<EOF
+REPO_URI="$WORKDIR/repo"
+REPO_PASSPHRASE="secret-passphrase"
+BACKUP_PATH="$WORKDIR/data"
+KEEP_LAST="5"
+SHOWTEXT="n"
+POSTRUN="exit 5"
+EOF
+
+if "$TNGBACKUP" backup --config "$HOOK_CONFIG" >/dev/null 2>&1; then
+    pass "a failing POSTRUN does not change the backup status"
+else
+    failed "POSTRUN failure isolation" "tngbackup exited non-zero because of a failing POSTRUN"
 fi
 
 # --- audit log -------------------------------------------------------------

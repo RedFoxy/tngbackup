@@ -17,7 +17,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TNGBACKUP="${TNGBACKUP:-$REPO_ROOT/tngbackup}"
+TNGBACKUP="${TNGBACKUP:-$REPO_ROOT/tngbackup.sh}"
 
 TEST_MOUNT="${TNGB_TEST_MOUNT:-n}"
 

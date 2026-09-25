@@ -1,9 +1,16 @@
 #!/bin/bash
 #
-# TNGBackup installer
+# TNGBackup installer (optional)
 #
-# Installs the tngbackup utility to a system location, prepares the log files
-# and (optionally) installs the man page and the systemd unit templates.
+# TNGBackup is a single self-contained script. Installing it is nothing more
+# than copying it to a directory in your PATH and making it executable:
+#
+#   cp tngbackup.sh /usr/local/bin/tngbackup
+#   chmod +x /usr/local/bin/tngbackup
+#
+# This script automates that step and a few optional extras (man page,
+# systemd units, config template, requirement checks). None of it is
+# required — use it only if you want the convenience.
 #
 # Usage:
 #   sudo ./install.sh                 # install to /usr/local/bin
@@ -22,7 +29,7 @@ LOG_FILE="${LOG_FILE:-/var/log/tngbackup.log}"
 AUDIT_LOG_FILE="${AUDIT_LOG_FILE:-/var/log/tngbackup-audit.log}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_SCRIPT="$SCRIPT_DIR/tngbackup"
+SOURCE_SCRIPT="$SCRIPT_DIR/tngbackup.sh"
 
 MIN_BASH_MAJOR=4
 MIN_BORG_MAJOR=1
@@ -178,7 +185,7 @@ main() {
     fi
 
     if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-        sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+        sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0
     fi
 

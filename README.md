@@ -1,4 +1,4 @@
-# TNGBackup v2.0.4 — The Next Generation Borg Backup
+# TNGBackup v2.0.5 — The Next Generation Borg Backup
 
 **Multi-language documentation:** [Italiano](#-italiano) | [English](#-english)
 
@@ -10,7 +10,7 @@
 
 TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup**. Semplifica operazioni complesse come backup locali e remoti, verifiche di integrità, gestione della conservazione, montaggio archivi e ripristino selettivo di file — il tutto da un'unica interfaccia.
 
-**Versione:** 2.0.4  
+**Versione:** 2.0.5  
 **Licenza:** CC BY-NC 4.0 (Non-Commerciale) + Commercial License  
 **Requisiti:** Bash 4.0+, Borg Backup 1.2+
 
@@ -144,7 +144,7 @@ ps aux | grep tngbackup
 
 TNGBackup is a unified management tool for **Borg Backup** operations. It simplifies complex tasks like local and remote backups, integrity verification, retention management, archive mounting, and selective file recovery — all from a single interface.
 
-**Version:** 2.0.4  
+**Version:** 2.0.5  
 **License:** CC BY-NC 4.0 (Non-Commercial) + Commercial License  
 **Requirements:** Bash 4.0+, Borg Backup 1.2+
 
@@ -278,9 +278,9 @@ ps aux | grep tngbackup
 - **Configuration Examples:** `docs/examples/` (local, remote, batch configs)
 - **Detailed Usage Guide:** `docs/USAGE.md`
 - **Migration from v0.8.8:** 
-  - Italiano: `docs/MIGRATION_it.md`
+  - Italiano: `docs/MIGRATION.md`
   - English: `docs/MIGRATION_en.md`
-- **Man Page:** `docs/tngbackup.1` (installed by `install.sh`)
+- **Man Page:** `docs/tngbackup.1` (optional, installed by `install.sh` or copy manually)
 - **Systemd Units:** `docs/tngbackup.service`, `docs/tngbackup.timer`
 - **Tests:** `tests/dispatch-test.sh` (no Borg needed), `tests/integration-test.sh`
 

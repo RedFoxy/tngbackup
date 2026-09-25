@@ -4,6 +4,21 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.5] — 2026-09-26
+
+### Fixed
+
+- **Backup Hooks (PRERUN/POSTRUN):** These variables were documented since v2.0.1 (README, CLAUDE.md, config examples) but were never actually read or executed by the script. `PRERUN` and `POSTRUN` are now implemented: `PRERUN` runs before `borg create` and aborts the backup (`FAILED`, audit-logged) if it exits non-zero; `POSTRUN` always runs after the backup attempt and its outcome does not affect the backup's status. Both honor `DRYRUN`.
+- **Test suite pointed at a deleted file:** `tests/dispatch-test.sh` and `tests/integration-test.sh` ran `$REPO_ROOT/tngbackup`, a wrapper file that was removed when the implementation was consolidated into `tngbackup.sh` in a past refactor; every test run failed immediately with "No such file or directory". Both suites now target `tngbackup.sh`. Added 4 dispatch-test cases covering PRERUN/POSTRUN.
+- **`install.sh` never worked:** for the same reason, it looked for a source file named `tngbackup` (no extension). Corrected the source filename.
+- **Migration conversion script (`docs/MIGRATION.md` / `docs/MIGRATION_en.md`):** the embedded `convert.sh` example picked retention values (`KEEP_LAST`/`KEEP_DAILY`/`KEEP_WEEKLY`/`KEEP_MONTHLY`) from whichever of `LOCAL_KEEP_*` / `REMOTE_KEEP_*` appeared first in the old config file, instead of the block matching the selected repository type. Configs with both a local and a remote section migrated the wrong retention policy. The script now selects the correct prefix based on the detected `REMOTE=y`/`n` flag.
+
+### Changed
+
+- Renamed `docs/MIGRATION_it.md` to `docs/MIGRATION.md`, matching the "no suffix = Italian, `_en` = English" convention already used by `docs/USAGE.md` / `docs/USAGE_en.md`.
+
+---
+
 ## [2.0.4] — 2026-09-09
 
 ### Fixed

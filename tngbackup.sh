@@ -5,7 +5,7 @@
 # SCRIPT METADATA
 #
 SCRIPT_NAME="tngbackup"
-SCRIPT_VERSION="2.0.4"
+SCRIPT_VERSION="2.0.5"
 SCRIPT_DESC="The Next Generation Borg Backup management utility"
 SCRIPT_AUTHOR="Massimo \"RedFoxy Darrest\" Cicciò"
 SCRIPT_LICENSE="CC BY-NC 4.0 (Non-Commercial) + Commercial License"
@@ -39,6 +39,10 @@ BACKUP_EXCLUDE="${BACKUP_EXCLUDE:-}"
 ARCHIVE_NAME="${ARCHIVE_NAME:-}"
 RESTORE_PATH="${RESTORE_PATH:-}"
 MOUNT_PATH="${MOUNT_PATH:-/mnt/borg}"
+
+# Backup hooks
+PRERUN="${PRERUN:-}"
+POSTRUN="${POSTRUN:-}"
 
 # Borg options
 BORG_ENCRYPTION="${BORG_ENCRYPTION:-repokey-blake2}"
@@ -241,7 +245,7 @@ EXAMPLES:
 DOCUMENTATION:
   Full guide:    https://github.com/RedFoxy/TNGBackup
   Local docs:    README.md, docs/USAGE.md
-  Migration:     docs/MIGRATION_it.md (Italian), docs/MIGRATION_en.md (English)
+  Migration:     docs/MIGRATION.md (Italian), docs/MIGRATION_en.md (English)
 
 Author: Massimo "RedFoxy Darrest" Cicciò
 License: CC BY-NC 4.0 (Non-Commercial) + Commercial License
@@ -684,12 +688,66 @@ borg_init() {
     finish_operation "init" "$rc" "$REPO_URI"
 }
 
+# Run the PRERUN hook. A non-zero exit aborts the backup.
+run_prerun() {
+    if [ -z "$PRERUN" ]; then
+        return 0
+    fi
+
+    log "INFO" "Running PRERUN hook: $PRERUN"
+
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] PRERUN: $PRERUN"
+        return 0
+    fi
+
+    local rc=0
+    bash -c "$PRERUN" || rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        log "INFO" "PRERUN hook completed successfully"
+        return 0
+    fi
+
+    error "PRERUN hook failed (exit $rc); backup aborted"
+    return "$rc"
+}
+
+# Run the POSTRUN hook. Its outcome never changes the backup status.
+run_postrun() {
+    if [ -z "$POSTRUN" ]; then
+        return 0
+    fi
+
+    log "INFO" "Running POSTRUN hook: $POSTRUN"
+
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] POSTRUN: $POSTRUN"
+        return 0
+    fi
+
+    local rc=0
+    bash -c "$POSTRUN" || rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+        log "INFO" "POSTRUN hook completed successfully"
+    else
+        log "WARN" "POSTRUN hook failed (exit $rc); backup status unaffected"
+    fi
+}
+
 borg_backup() {
     log "INFO" "Starting backup from: $BACKUP_PATH"
 
     if [ -z "$BACKUP_PATH" ]; then
         error "BACKUP_PATH not set"
         OPERATION_STATUS="FAILED"
+        return 1
+    fi
+
+    if ! run_prerun; then
+        OPERATION_STATUS="FAILED"
+        audit_log "backup" "FAILED" "PRERUN hook failed" "$(calculate_duration)"
         return 1
     fi
 
@@ -731,6 +789,8 @@ borg_backup() {
 
     local rc=0
     run_borg create "${args[@]}" || rc=$?
+
+    run_postrun
 
     finish_operation "backup" "$rc" "$ARCHIVE_NAME"
 }
