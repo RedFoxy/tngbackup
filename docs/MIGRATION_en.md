@@ -121,6 +121,7 @@ REMOTE_KEEP_YEARLY=0
 **v2.x.x (unified, single set):**
 ```bash
 KEEP_LAST=10
+KEEP_HOURLY=0    # New in v2.x.x, no v0.8.8 equivalent
 KEEP_DAILY=7
 KEEP_WEEKLY=4
 KEEP_MONTHLY=12
@@ -543,6 +544,7 @@ BACKUP_EXCLUDE="$BACKUP_EXCLUDE"
 BORG_ENCRYPTION="repokey-blake2"
 
 KEEP_LAST=$(grep "^${SCOPE}_KEEP_LAST=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
+KEEP_HOURLY=$(grep "^${SCOPE}_KEEP_HOURLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_DAILY=$(grep "^${SCOPE}_KEEP_DAILY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_WEEKLY=$(grep "^${SCOPE}_KEEP_WEEKLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_MONTHLY=$(grep "^${SCOPE}_KEEP_MONTHLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)

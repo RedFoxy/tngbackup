@@ -4,6 +4,14 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.7] — 2026-09-26
+
+### Fixed
+
+- **Migration conversion script — missing `KEEP_HOURLY`:** the retention block did not carry over `KEEP_HOURLY` at all. `tngbackup.sh` supports it (`KEEP_HOURLY`), so it is now extracted like the other retention values; v0.8.8 configs never had a `LOCAL_KEEP_HOURLY`/`REMOTE_KEEP_HOURLY` field, so this is empty unless the old config happened to define one. Documented as a new, optional v2.x.x-only setting in both migration guides.
+
+---
+
 ## [2.0.6] — 2026-09-26
 
 ### Fixed
