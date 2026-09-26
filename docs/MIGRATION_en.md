@@ -516,11 +516,8 @@ REPO=$(grep "^REPOSITORY=" "$OLD_CONFIG" | cut -d'"' -f2)
 # Choose local or remote
 if grep -q "^REMOTE=y" "$OLD_CONFIG"; then
   SCOPE="REMOTE"
-  SSH_HOST=$(grep "^SSH_HOST=" "$OLD_CONFIG" | cut -d'"' -f2)
-  SSH_USER=$(grep "^SSH_USER=" "$OLD_CONFIG" | cut -d'"' -f2)
-  SSH_PORT=$(grep "^SSH_PORT=" "$OLD_CONFIG" | cut -d'=' -f2)
-  REMOTE_REPO=$(grep "^REMOTE_REPO=" "$OLD_CONFIG" | cut -d'"' -f2 | sed 's/${REPOSITORY}/'"$REPO"'/g')
-  REPO_URI="ssh://$SSH_USER@$SSH_HOST:$SSH_PORT${REMOTE_REPO#./}"
+  # REMOTE_REPO in v0.8.8 is already a full "ssh://user@host:port/path" URI
+  REPO_URI=$(grep "^REMOTE_REPO=" "$OLD_CONFIG" | cut -d'"' -f2 | sed 's/${REPOSITORY}/'"$REPO"'/g')
 else
   SCOPE="LOCAL"
   LOCAL_REPO=$(grep "^LOCAL_REPO=" "$OLD_CONFIG" | cut -d'"' -f2 | sed 's/${REPOSITORY}/'"$REPO"'/g')
@@ -549,6 +546,7 @@ KEEP_LAST=$(grep "^${SCOPE}_KEEP_LAST=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_DAILY=$(grep "^${SCOPE}_KEEP_DAILY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_WEEKLY=$(grep "^${SCOPE}_KEEP_WEEKLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 KEEP_MONTHLY=$(grep "^${SCOPE}_KEEP_MONTHLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
+KEEP_YEARLY=$(grep "^${SCOPE}_KEEP_YEARLY=" "$OLD_CONFIG" | head -1 | cut -d'=' -f2)
 
 DEBUG=$(grep "^DEBUG=" "$OLD_CONFIG" | cut -d'=' -f2)
 DRYRUN=$(grep "^DRYRUN=" "$OLD_CONFIG" | cut -d'=' -f2)

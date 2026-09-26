@@ -4,6 +4,15 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.6] — 2026-09-26
+
+### Fixed
+
+- **Migration conversion script — corrupted remote `REPO_URI`:** the embedded `convert.sh` example rebuilt the remote repository URI as `ssh://$SSH_USER@$SSH_HOST:$SSH_PORT$REMOTE_REPO`, but `REMOTE_REPO` in v0.8.8 configs is already a complete `ssh://user@host:port/path` URI. Every remote migration produced a doubled, invalid URI (e.g. `ssh://user@host:2222ssh://user@host:2222/path`). The script now uses `REMOTE_REPO` as-is for `REPO_URI`.
+- **Migration conversion script — missing `KEEP_YEARLY`:** the retention block only carried over `KEEP_LAST`/`KEEP_DAILY`/`KEEP_WEEKLY`/`KEEP_MONTHLY`; `KEEP_YEARLY` (present in v0.8.8 configs) was silently dropped. Now extracted like the other retention values.
+
+---
+
 ## [2.0.5] — 2026-09-26
 
 ### Fixed
