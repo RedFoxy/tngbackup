@@ -4,6 +4,14 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.9] — 2026-09-26
+
+### Fixed
+
+- **`docs/USAGE.md` was in English, not Italian:** despite the project's naming convention (no suffix = Italian, `_en` = English, also used by `docs/MIGRATION.md`/`docs/MIGRATION_en.md`), `docs/USAGE.md` was a near-duplicate of `docs/USAGE_en.md` in English — there was no Italian user guide at all. Fully translated (2451 lines): all prose, headings and table descriptions are now in Italian, with the table of contents anchors updated to match; configuration variable names, shell commands, file paths, code blocks and literal tool output/error messages (which the script always prints in English) are left untouched, since translating those would misrepresent what the tool actually shows on screen.
+
+---
+
 ## [2.0.8] — 2026-09-26
 
 ### Added

@@ -6,7 +6,7 @@ configuration, credential handling, retention policy and audit logging so that
 a full backup routine can be expressed in a single small configuration file and
 driven by one command.
 
-This document describes version **2.0.8** of the `tngbackup` script.
+This document describes version **2.0.9** of the `tngbackup` script.
 
 ---
 
@@ -1253,7 +1253,7 @@ Running `tngbackup` with no operation (and no `--help`) shows a menu:
 
 ```
 ╔═══════════════════════════════════╗
-║      TNGBackup v2.0.8             ║
+║      TNGBackup v2.0.9             ║
 ╚═══════════════════════════════════╝
 
   1) Initialize repository
@@ -2318,4 +2318,4 @@ your production Borg version before trusting the tool with real data.
 
 ---
 
-TNGBackup 2.0.8 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial
+TNGBackup 2.0.9 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial

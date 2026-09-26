@@ -1,26 +1,26 @@
-# TNGBackup - Usage Guide
+# TNGBackup - Guida all'Uso
 
-TNGBackup ("The Next Generation Backup") is a Bash wrapper around
-[Borg Backup](https://www.borgbackup.org/). It centralises repository
-configuration, credential handling, retention policy and audit logging so that
-a full backup routine can be expressed in a single small configuration file and
-driven by one command.
+TNGBackup ("The Next Generation Backup") è un wrapper Bash attorno a
+[Borg Backup](https://www.borgbackup.org/). Centralizza la configurazione del
+repository, la gestione delle credenziali, la politica di retention e l'audit
+logging, in modo che un'intera routine di backup possa essere espressa in un
+unico piccolo file di configurazione e pilotata con un solo comando.
 
-This document describes version **2.0.8** of the `tngbackup` script.
+Questo documento descrive la versione **2.0.9** dello script `tngbackup`.
 
 ---
 
-## Table of contents
+## Indice
 
-1. [Status and testing](#status-and-testing)
-2. [Requirements](#requirements)
-3. [Installation](#installation)
-4. [Concepts](#concepts)
-5. [Command line synopsis](#command-line-synopsis)
-6. [Configuration file reference](#configuration-file-reference)
-7. [Repository URI formats](#repository-uri-formats)
-8. [Dry-run mode](#dry-run-mode)
-9. [Operations](#operations)
+1. [Stato e testing](#stato-e-testing)
+2. [Requisiti](#requisiti)
+3. [Installazione](#installazione)
+4. [Concetti](#concetti)
+5. [Sintassi della riga di comando](#sintassi-della-riga-di-comando)
+6. [Riferimento del file di configurazione](#riferimento-del-file-di-configurazione)
+7. [Formati dell'URI del repository](#formati-delluri-del-repository)
+8. [Modalità dry-run](#modalità-dry-run)
+9. [Operazioni](#operazioni)
    - [init](#init)
    - [backup](#backup)
    - [list](#list)
@@ -31,31 +31,31 @@ This document describes version **2.0.8** of the `tngbackup` script.
    - [info](#info)
    - [delete](#delete)
    - [extract](#extract)
-10. [Interactive menu](#interactive-menu)
-11. [Retention policy](#retention-policy)
-12. [Batch mode](#batch-mode)
+10. [Menu interattivo](#menu-interattivo)
+11. [Politica di retention](#politica-di-retention)
+12. [Modalità batch](#modalità-batch)
 13. [Logging](#logging)
-14. [Security notes](#security-notes)
-15. [Scheduling](#scheduling)
-16. [Troubleshooting](#troubleshooting)
-17. [Exit codes](#exit-codes)
-18. [Tests](#tests)
+14. [Note di sicurezza](#note-di-sicurezza)
+15. [Pianificazione](#pianificazione)
+16. [Risoluzione dei problemi](#risoluzione-dei-problemi)
+17. [Codici di uscita](#codici-di-uscita)
+18. [Test](#test)
 
 ---
 
-## Status and testing
+## Stato e testing
 
-All ten operations - `init`, `backup`, `list`, `mount`, `check`, `prune`,
-`compact`, `info`, `delete` and `extract` - are implemented and dispatched
-through a single shared `dispatch_operation` function, used identically by
-single-config and batch runs.
+Tutte e dieci le operazioni - `init`, `backup`, `list`, `mount`, `check`, `prune`,
+`compact`, `info`, `delete` e `extract` - sono implementate e instradate
+attraverso un'unica funzione condivisa `dispatch_operation`, usata in modo
+identico dalle esecuzioni a configurazione singola e da quelle in batch.
 
-The suite is covered by two test scripts in `tests/`:
+La suite è coperta da due script di test in `tests/`:
 
-| Script | Needs Borg? | What it covers |
+| Script | Serve Borg? | Cosa copre |
 |---|---|---|
-| `tests/dispatch-test.sh` | No | 26 checks. Puts a stub `borg` first on `PATH` and records the command line it receives, so argument handling, operation dispatch, config loading, CLI precedence, dry-run, batch mode, audit-log format and the success/warning/failure exit-code mapping are all verified anywhere. |
-| `tests/integration-test.sh` | Yes | Creates a throwaway Borg repository in a temporary directory, exercises every operation against it for real, verifies the audit log, then removes everything. |
+| `tests/dispatch-test.sh` | No | 26 controlli. Mette per primo nel `PATH` uno stub `borg` e registra la riga di comando che riceve, così l'elaborazione degli argomenti, il dispatch delle operazioni, il caricamento della configurazione, la precedenza CLI, il dry-run, la modalità batch, il formato dell'audit log e la mappatura dei codici di uscita successo/warning/fallimento sono tutti verificabili ovunque. |
+| `tests/integration-test.sh` | Sì | Crea un repository Borg usa e getta in una directory temporanea, esercita davvero ogni operazione contro di esso, verifica l'audit log, poi rimuove tutto. |
 
 ```bash
 ./tests/dispatch-test.sh                          # runs anywhere
@@ -63,30 +63,31 @@ The suite is covered by two test scripts in `tests/`:
 TNGB_TEST_MOUNT=y ./tests/integration-test.sh     # also exercises mount (needs FUSE)
 ```
 
-See [Tests](#tests) for exit codes and details.
+Vedi [Test](#test) per i codici di uscita e i dettagli.
 
-Borg itself changes behaviour between major versions (notably 1.x versus 2.x:
-archive addressing, `borg init` versus `borg repo-create`, compaction
-semantics). TNGBackup targets Borg 1.2/1.3 command syntax. Run the integration
-test against your installed Borg version before putting the tool into
-production, and rehearse a restore at least once.
+Borg stesso cambia comportamento tra versioni major (in particolare 1.x contro
+2.x: indirizzamento degli archivi, `borg init` contro `borg repo-create`,
+semantica della compattazione). TNGBackup punta alla sintassi dei comandi Borg
+1.2/1.3. Esegui il test di integrazione contro la versione di Borg installata
+prima di mettere lo strumento in produzione, e prova un ripristino almeno una
+volta.
 
 ---
 
-## Requirements
+## Requisiti
 
-| Component | Minimum | Notes |
+| Componente | Minimo | Note |
 |---|---|---|
-| Bash | 4.0 | The script uses `mapfile`, arrays, `read -ra`, `${!var}` indirection and `set -o pipefail`. Enforced by `install.sh`. |
-| Borg Backup | 1.2 (1.3 recommended) | Must be on `PATH` as `borg`. Checked by `install.sh` and again at runtime by `validate_config`. |
-| `getopt` | util-linux | GNU `getopt` with long-option support. The BSD/macOS built-in `getopt` will not work. |
-| `coreutils` | any recent | `date`, `touch`, `chmod`, `tee`, `mkdir`. |
-| OpenSSH client | any recent | Only for remote (`ssh://`) repositories. |
-| FUSE + `llfuse`/`pyfuse3` | optional | Only needed for the `mount` operation. Install `borgbackup[fuse]` or your distribution's fuse extra. |
-| `shred` | optional | Used by the cleanup trap to destroy temporary config files; falls back to `rm -f`. |
-| `mountpoint` | optional | Used by the cleanup trap to detect and unmount stale Borg mounts. |
+| Bash | 4.0 | Lo script usa `mapfile`, array, `read -ra`, l'indirezione `${!var}` e `set -o pipefail`. Verificato da `install.sh`. |
+| Borg Backup | 1.2 (1.3 consigliato) | Deve essere nel `PATH` come `borg`. Controllato da `install.sh` e di nuovo a runtime da `validate_config`. |
+| `getopt` | util-linux | GNU `getopt` con supporto alle opzioni lunghe. Il `getopt` integrato BSD/macOS non funziona. |
+| `coreutils` | qualsiasi versione recente | `date`, `touch`, `chmod`, `tee`, `mkdir`. |
+| Client OpenSSH | qualsiasi versione recente | Solo per repository remoti (`ssh://`). |
+| FUSE + `llfuse`/`pyfuse3` | opzionale | Necessario solo per l'operazione `mount`. Installa `borgbackup[fuse]` o l'extra fuse della tua distribuzione. |
+| `shred` | opzionale | Usato dal trap di pulizia per distruggere i file di configurazione temporanei; in mancanza ricade su `rm -f`. |
+| `mountpoint` | opzionale | Usato dal trap di pulizia per rilevare e smontare mount Borg residui. |
 
-Check what you have:
+Verifica cosa hai:
 
 ```bash
 bash --version | head -1
@@ -94,14 +95,14 @@ borg --version
 getopt --test; echo "getopt exit: $?"   # 4 means GNU enhanced getopt
 ```
 
-TNGBackup is a Linux/BSD tool. It is not supported on Windows except through
-WSL or Git Bash with GNU getopt available.
+TNGBackup è uno strumento Linux/BSD. Non è supportato su Windows tranne che
+tramite WSL o Git Bash con GNU getopt disponibile.
 
 ---
 
-## Installation
+## Installazione
 
-### Using install.sh
+### Con install.sh
 
 ```bash
 git clone https://github.com/RedFoxy/TNGBackup.git
@@ -109,37 +110,37 @@ cd TNGBackup
 sudo ./install.sh
 ```
 
-The installer:
+L'installatore:
 
-1. Verifies Bash 4.0+ and Borg 1.2+, and warns (without failing) if `getopt` or
-   `ssh` are missing.
-2. Installs the script to `$PREFIX/bin/tngbackup` with mode 0755
-   (`PREFIX` defaults to `/usr/local`).
-3. Creates `/var/log/tngbackup.log` and `/var/log/tngbackup-audit.log` with
-   mode 0600, or `chmod 600`s them if they already exist.
-4. Installs `docs/tngbackup.1` to `$PREFIX/share/man/man1/`.
-5. Installs a configuration template to `/etc/tngbackup.conf` with mode 0600 -
-   **only if that file does not already exist**, so an upgrade never clobbers
-   your live configuration.
-6. Installs `tngbackup.service` and `tngbackup.timer` into
-   `/etc/systemd/system/` when that directory exists.
+1. Verifica Bash 4.0+ e Borg 1.2+, e avvisa (senza fallire) se `getopt` o
+   `ssh` mancano.
+2. Installa lo script in `$PREFIX/bin/tngbackup` con modalità 0755
+   (`PREFIX` di default è `/usr/local`).
+3. Crea `/var/log/tngbackup.log` e `/var/log/tngbackup-audit.log` con
+   modalità 0600, oppure esegue `chmod 600` se già esistono.
+4. Installa `docs/tngbackup.1` in `$PREFIX/share/man/man1/`.
+5. Installa un modello di configurazione in `/etc/tngbackup.conf` con
+   modalità 0600 - **solo se quel file non esiste già**, così un
+   aggiornamento non sovrascrive mai la configurazione in uso.
+6. Installa `tngbackup.service` e `tngbackup.timer` in
+   `/etc/systemd/system/` quando quella directory esiste.
 
-Steps 3 to 6 warn and continue if a destination is not writable, so a
-non-root install still produces a working binary.
+I passi da 3 a 6 avvisano e continuano se una destinazione non è scrivibile,
+così un'installazione non-root produce comunque un binario funzionante.
 
-Environment variables recognised by the installer:
+Variabili d'ambiente riconosciute dall'installatore:
 
-| Variable | Default | Purpose |
+| Variabile | Default | Scopo |
 |---|---|---|
-| `PREFIX` | `/usr/local` | Installation prefix. |
-| `BIN_DIR` | `$PREFIX/bin` | Binary destination. |
-| `MAN_DIR` | `$PREFIX/share/man/man1` | Man page destination. |
-| `SYSTEMD_DIR` | `/etc/systemd/system` | Unit destination. |
-| `CONFIG_FILE` | `/etc/tngbackup.conf` | Config template destination. |
-| `LOG_FILE` | `/var/log/tngbackup.log` | Log file to create. |
-| `AUDIT_LOG_FILE` | `/var/log/tngbackup-audit.log` | Audit log to create. |
+| `PREFIX` | `/usr/local` | Prefisso di installazione. |
+| `BIN_DIR` | `$PREFIX/bin` | Destinazione del binario. |
+| `MAN_DIR` | `$PREFIX/share/man/man1` | Destinazione della man page. |
+| `SYSTEMD_DIR` | `/etc/systemd/system` | Destinazione delle unit. |
+| `CONFIG_FILE` | `/etc/tngbackup.conf` | Destinazione del modello di configurazione. |
+| `LOG_FILE` | `/var/log/tngbackup.log` | File di log da creare. |
+| `AUDIT_LOG_FILE` | `/var/log/tngbackup-audit.log` | Audit log da creare. |
 
-Per-user installation, no root required:
+Installazione per singolo utente, senza root:
 
 ```bash
 PREFIX="$HOME/.local" \
@@ -149,19 +150,19 @@ AUDIT_LOG_FILE="$HOME/.local/state/tngbackup-audit.log" \
 ./install.sh
 ```
 
-Help and removal:
+Aiuto e rimozione:
 
 ```bash
 ./install.sh --help
 sudo ./install.sh --uninstall
 ```
 
-`--uninstall` removes the binary, the man page and the systemd units. It
-deliberately **leaves the configuration file and both log files in place** -
-losing a passphrase file to an uninstall would be unrecoverable. Remove them by
-hand if you really mean to.
+`--uninstall` rimuove il binario, la man page e le unit systemd. Lascia
+deliberatamente **il file di configurazione ed entrambi i log al loro posto** -
+perdere un file di passphrase a causa di una disinstallazione sarebbe
+irrecuperabile. Rimuovili a mano se è davvero ciò che vuoi.
 
-### Configuring after install
+### Configurazione dopo l'installazione
 
 ```bash
 sudo "${EDITOR:-vi}" /etc/tngbackup.conf
@@ -169,7 +170,7 @@ sudo chmod 600 /etc/tngbackup.conf
 man tngbackup
 ```
 
-For batch mode, create a directory instead:
+Per la modalità batch, crea invece una directory:
 
 ```bash
 sudo mkdir -p /etc/tngbackup
@@ -179,99 +180,106 @@ sudo install -m 0600 docs/examples/batch-configs/webserver.conf /etc/tngbackup/
 
 ---
 
-## Concepts
+## Concetti
 
-**Configuration is sourced, not parsed.** `load_config` runs `source` on the
-configuration file inside the running shell. That means a config file is a
-Bash script: you can compute values, reference other variables, and call
-commands. It also means a config file can execute arbitrary code, which is why
-ownership and permissions matter (see [Security notes](#security-notes)).
+**La configurazione è sorgente (`source`), non parsata.** `load_config` esegue
+`source` sul file di configurazione all'interno della shell in esecuzione.
+Questo significa che un file di configurazione è uno script Bash: puoi
+calcolare valori, riferirti ad altre variabili e chiamare comandi. Significa
+anche che un file di configurazione può eseguire codice arbitrario, motivo per
+cui proprietà e permessi contano (vedi
+[Note di sicurezza](#note-di-sicurezza)).
 
-**Precedence, honestly, per option.** The order of operations in `main()` is:
-parse the command line, show the menu if no operation was given, save the CLI
-repository and passphrase, source the configuration file, then re-apply those
-two saved values on top. So:
+**Precedenza, onestamente, per opzione.** L'ordine delle operazioni in
+`main()` è: analizza la riga di comando, mostra il menu se non è stata data
+alcuna operazione, salva repository e passphrase da CLI, esegui il `source`
+del file di configurazione, poi riapplica quei due valori salvati sopra. Quindi:
 
-| Setting | Effective precedence |
+| Impostazione | Precedenza effettiva |
 |---|---|
-| `-r` / `--repo` (`REPO_URI`) | **CLI > config file > environment > default.** Re-applied after sourcing, so the CLI genuinely wins. |
-| `-p` / `--passphrase` (`REPO_PASSPHRASE`) | **CLI > config file > environment > default.** Same mechanism. |
-| `--archive`, `--path`, `--mountpoint`, `--log`, `--audit-log` | Applied **before** the config file is sourced, so a config file that assigns `ARCHIVE_NAME`, `RESTORE_PATH`, `MOUNT_PATH`, `LOG_FILE` or `AUDIT_LOG_FILE` unconditionally overrides the CLI value. Leave those variables out of the config file (or guard them with `${VAR:-...}`) if you want to set them from the command line. |
-| `-c` / `--config` | Always the CLI value - it selects which file is sourced. |
-| Everything else | Environment > script default, then whatever the config file assigns. |
+| `-r` / `--repo` (`REPO_URI`) | **CLI > file di configurazione > ambiente > default.** Riapplicata dopo il sourcing, quindi la CLI vince davvero. |
+| `-p` / `--passphrase` (`REPO_PASSPHRASE`) | **CLI > file di configurazione > ambiente > default.** Stesso meccanismo. |
+| `--archive`, `--path`, `--mountpoint`, `--log`, `--audit-log` | Applicate **prima** che il file di configurazione venga sourced, quindi un file di configurazione che assegna incondizionatamente `ARCHIVE_NAME`, `RESTORE_PATH`, `MOUNT_PATH`, `LOG_FILE` o `AUDIT_LOG_FILE` sovrascrive il valore della CLI. Lascia quelle variabili fuori dal file di configurazione (o proteggile con `${VAR:-...}`) se vuoi impostarle da riga di comando. |
+| `-c` / `--config` | Sempre il valore della CLI - seleziona quale file viene sourced. |
+| Tutto il resto | Ambiente > default dello script, poi qualsiasi cosa assegni il file di configurazione. |
 
-In **batch mode** `--repo` and `--passphrase` have no effect: the batch loop
-resets `REPO_URI` and `REPO_PASSPHRASE` before sourcing each config, and the
-re-apply step is not reached. Each config file must carry its own repository
-and passphrase, which is the point of batch mode.
+In **modalità batch** `--repo` e `--passphrase` non hanno alcun effetto: il
+ciclo batch resetta `REPO_URI` e `REPO_PASSPHRASE` prima di eseguire il source
+di ogni configurazione, e il passo di riapplicazione non viene raggiunto. Ogni
+file di configurazione deve portare il proprio repository e la propria
+passphrase, che è appunto il senso della modalità batch.
 
-**Environment variables.** Every configuration variable has a
-`${VAR:-default}` initialiser at the top of the script, so exporting the
-variable sets its value before the config file is read. An unconditional
-assignment in the config file still wins over the environment.
+**Variabili d'ambiente.** Ogni variabile di configurazione ha un
+inizializzatore `${VAR:-default}` in cima allo script, quindi esportare la
+variabile ne imposta il valore prima che il file di configurazione venga
+letto. Un'assegnazione incondizionata nel file di configurazione vince comunque
+sull'ambiente.
 
-**Credentials live in the environment for the duration of a Borg call.**
-`setup_borg_env` exports `BORG_PASSPHRASE` and `BORG_REPO` before each Borg
-invocation, and adds `BORG_RSH` automatically for `ssh://` repositories. The
-`EXIT`/`INT`/`TERM` trap unsets all of them at the end of the run.
+**Le credenziali vivono nell'ambiente solo per la durata di una chiamata a
+Borg.** `setup_borg_env` esporta `BORG_PASSPHRASE` e `BORG_REPO` prima di ogni
+invocazione di Borg, e aggiunge automaticamente `BORG_RSH` per i repository
+`ssh://`. Il trap `EXIT`/`INT`/`TERM` le annulla tutte alla fine
+dell'esecuzione.
 
-**Borg is never allowed to block on a prompt.** Every Borg invocation goes
-through `run_borg`, which runs `borg ... < /dev/null`, and the script exports
-`BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes` and
-`BORG_RELOCATED_REPO_ACCESS_IS_OK=yes` at startup. A confirmation prompt
-therefore fails fast instead of hanging a cron job forever. Both variables
-respect an existing value from the environment, so you can set either to `no`
-if you would rather have those two conditions abort the run.
+**Borg non può mai bloccarsi in attesa di un prompt.** Ogni invocazione di
+Borg passa attraverso `run_borg`, che esegue `borg ... < /dev/null`, e lo
+script esporta all'avvio `BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes` e
+`BORG_RELOCATED_REPO_ACCESS_IS_OK=yes`. Un prompt di conferma quindi fallisce
+rapidamente invece di bloccare per sempre un job cron. Entrambe le variabili
+rispettano un valore già presente nell'ambiente, quindi puoi impostarne una a
+`no` se preferisci che quelle due condizioni interrompano l'esecuzione.
 
 ---
 
-## Command line synopsis
+## Sintassi della riga di comando
 
 ```
 tngbackup [OPERATION] [OPTIONS]
 ```
 
-`OPERATION` is a bare word (no leading dash). If it is omitted, the interactive
-menu is shown.
+`OPERATION` è una parola nuda (senza trattino iniziale). Se viene omessa, viene
+mostrato il menu interattivo.
 
-| Option | Argument | Description |
+| Opzione | Argomento | Descrizione |
 |---|---|---|
-| `-c`, `--config` | FILE or DIR | Configuration file to source. If a **directory** is given, batch mode is used and every `*.conf` file inside it is processed in turn. Default: `/etc/tngbackup.conf` (or `$TNGB_CONFIG`). |
-| `-r`, `--repo` | URI | Repository URI. Sets `REPO_URI`, and is re-applied after the config file is sourced. |
-| `-p`, `--passphrase` | STRING | Repository passphrase. Sets `REPO_PASSPHRASE`, re-applied after the config file. Avoid on shared systems. |
-| `--archive` | NAME | Archive name. Used by `backup`, `list`, `check`, `info`, `mount`, and **required** by `delete` and `extract`. |
-| `--path` | PATH | Context-dependent. With `backup` it sets `BACKUP_PATH`; with every other operation, `extract` included, it sets `RESTORE_PATH`. |
-| `--mountpoint` | PATH | Mount directory for `mount`. Sets `MOUNT_PATH`. Default `/mnt/borg`. |
-| `-l`, `--log` | FILE | Human-readable log file. The file is created immediately and `chmod 600`. |
-| `--audit-log` | FILE | Machine-readable audit log. Created immediately and `chmod 600`. |
-| `-h`, `--help` | | Print the built-in help and exit 0. |
+| `-c`, `--config` | FILE o DIR | File di configurazione da sourced. Se viene data una **directory**, viene usata la modalità batch e ogni file `*.conf` al suo interno viene elaborato a turno. Default: `/etc/tngbackup.conf` (o `$TNGB_CONFIG`). |
+| `-r`, `--repo` | URI | URI del repository. Imposta `REPO_URI`, e viene riapplicato dopo il sourcing del file di configurazione. |
+| `-p`, `--passphrase` | STRING | Passphrase del repository. Imposta `REPO_PASSPHRASE`, riapplicata dopo il file di configurazione. Da evitare su sistemi condivisi. |
+| `--archive` | NAME | Nome dell'archivio. Usato da `backup`, `list`, `check`, `info`, `mount`, e **richiesto** da `delete` ed `extract`. |
+| `--path` | PATH | Dipende dal contesto. Con `backup` imposta `BACKUP_PATH`; con ogni altra operazione, `extract` incluso, imposta `RESTORE_PATH`. |
+| `--mountpoint` | PATH | Directory di mount per `mount`. Imposta `MOUNT_PATH`. Default `/mnt/borg`. |
+| `-l`, `--log` | FILE | Log leggibile per l'uomo. Il file viene creato immediatamente e sottoposto a `chmod 600`. |
+| `--audit-log` | FILE | Audit log leggibile da macchina. Creato immediatamente e sottoposto a `chmod 600`. |
+| `-h`, `--help` | | Stampa l'help integrato ed esce con 0. |
 
-Notes on argument handling:
+Note sulla gestione degli argomenti:
 
-- Options are parsed with GNU `getopt`, so `--config=/etc/x.conf` and
-  `--config /etc/x.conf` are both accepted, as are clustered short options.
-- An unrecognised option causes the help text to be printed and the script to
-  exit with status 1.
-- The operation is taken from the **first positional argument** after `--`.
-  `tngbackup --config /etc/tngbackup.conf backup` and
-  `tngbackup backup --config /etc/tngbackup.conf` are equivalent.
-- `--path` is overloaded. This is a common source of confusion: with
-  `extract`, `--path` is the *restore destination*, not a selector for what to
-  extract.
-- `--log` and `--audit-log` create their file eagerly. If the path is not
-  writable (`/var/log` as a non-root user, say) the script aborts under
-  `set -e` before doing any work. Once a log file *is* configured, a later
-  failure to write to it is tolerated and never aborts a backup.
+- Le opzioni sono analizzate con GNU `getopt`, quindi sia
+  `--config=/etc/x.conf` sia `--config /etc/x.conf` sono accettate, così come
+  le opzioni brevi raggruppate.
+- Un'opzione non riconosciuta fa stampare il testo di aiuto e lo script esce
+  con stato 1.
+- L'operazione viene presa dal **primo argomento posizionale** dopo `--`.
+  `tngbackup --config /etc/tngbackup.conf backup` e
+  `tngbackup backup --config /etc/tngbackup.conf` sono equivalenti.
+- `--path` è sovraccarico (overloaded). Questa è una fonte comune di
+  confusione: con `extract`, `--path` è la *destinazione del ripristino*, non
+  un selettore di cosa estrarre.
+- `--log` e `--audit-log` creano il proprio file in modo anticipato. Se il
+  percorso non è scrivibile (`/var/log` per un utente non-root, ad esempio) lo
+  script abortisce sotto `set -e` prima di fare qualunque lavoro. Una volta che
+  un file di log *è* configurato, un fallimento successivo nello scriverci
+  viene tollerato e non fa mai abortire un backup.
 
 ---
 
-## Configuration file reference
+## Riferimento del file di configurazione
 
-A configuration file is a Bash fragment. Quote every value. One assignment per
-line. Comments start with `#`.
+Un file di configurazione è un frammento Bash. Metti tra virgolette ogni
+valore. Un'assegnazione per riga. I commenti iniziano con `#`.
 
-Because the script applies real defaults, a minimal config is genuinely
-minimal:
+Poiché lo script applica default reali, una configurazione minima è
+genuinamente minima:
 
 ```bash
 REPO_URI="/mnt/backup/borg-repo"
@@ -279,19 +287,20 @@ REPO_PASSPHRASE='correct horse battery staple'
 BACKUP_PATH="/home /etc"
 ```
 
-That inherits `repokey-blake2` encryption, the default SSH options, and the
-default retention policy - which does mean `prune` will act on it, so read
-[Retention policy](#retention-policy) before running one.
+Questo eredita la cifratura `repokey-blake2`, le opzioni SSH di default, e la
+politica di retention di default - il che significa che `prune` agirà su di
+essa, quindi leggi [Politica di retention](#politica-di-retention) prima di
+eseguirne una.
 
 ### Core
 
-| Variable | Type | Default | Description |
+| Variabile | Tipo | Default | Descrizione |
 |---|---|---|---|
-| `TNGB_CONFIG` | path | `/etc/tngbackup.conf` | Path of the configuration file or directory to load. Normally set via `--config` or the environment, not inside a config file. |
-| `DEBUG` | `y`/`n` | `n` | Print `[DEBUG]` diagnostics: config loading, CLI parsing, the exact Borg command line, retention policy, cleanup steps. |
-| `DRYRUN` | `y`/`n` | `n` | Log each Borg command instead of running it. See [Dry-run mode](#dry-run-mode). Independent of `DEBUG`. |
-| `SHOWTEXT` | `y`/`n` | `y` | Print timestamped `[INFO]`/`[WARN]`/`[ERROR]` lines to the console. Set to `n` for quiet cron jobs that only write to `LOG_FILE`. |
-| `BACKUP` | `y`/`n` | `y` | Reserved compatibility flag carried over from v1. Present with a default; the v2 dispatcher selects work by operation name. |
+| `TNGB_CONFIG` | percorso | `/etc/tngbackup.conf` | Percorso del file o della directory di configurazione da caricare. Normalmente impostato tramite `--config` o l'ambiente, non dentro un file di configurazione. |
+| `DEBUG` | `y`/`n` | `n` | Stampa diagnostiche `[DEBUG]`: caricamento della configurazione, parsing della CLI, la riga di comando Borg esatta, la politica di retention, i passi di pulizia. |
+| `DRYRUN` | `y`/`n` | `n` | Registra ogni comando Borg invece di eseguirlo. Vedi [Modalità dry-run](#modalità-dry-run). Indipendente da `DEBUG`. |
+| `SHOWTEXT` | `y`/`n` | `y` | Stampa sulla console righe `[INFO]`/`[WARN]`/`[ERROR]` con timestamp. Imposta a `n` per job cron silenziosi che scrivono solo su `LOG_FILE`. |
+| `BACKUP` | `y`/`n` | `y` | Flag di compatibilità riservato ereditato dalla v1. Presente con un default; il dispatcher v2 seleziona il lavoro in base al nome dell'operazione. |
 
 ```bash
 DEBUG="n"
@@ -301,11 +310,11 @@ SHOWTEXT="y"
 
 ### Repository
 
-| Variable | Type | Default | Required | Description |
+| Variabile | Tipo | Default | Richiesta | Descrizione |
 |---|---|---|---|---|
-| `REPO_URI` | string | (empty) | yes | Borg repository location. Local absolute path or `ssh://` URI. Exported as `BORG_REPO`. |
-| `REPO_PASSPHRASE` | string | (empty) | yes | Passphrase for the encrypted repository. Exported as `BORG_PASSPHRASE`. |
-| `BORG_ENCRYPTION` | string | `repokey-blake2` | no | Encryption mode passed to `borg init --encryption=`. Only used by `init`. |
+| `REPO_URI` | stringa | (vuoto) | sì | Posizione del repository Borg. Percorso locale assoluto oppure URI `ssh://`. Esportata come `BORG_REPO`. |
+| `REPO_PASSPHRASE` | stringa | (vuoto) | sì | Passphrase per il repository cifrato. Esportata come `BORG_PASSPHRASE`. |
+| `BORG_ENCRYPTION` | stringa | `repokey-blake2` | no | Modalità di cifratura passata a `borg init --encryption=`. Usata solo da `init`. |
 
 ```bash
 REPO_URI="/mnt/backup/borg-repo"
@@ -313,26 +322,27 @@ REPO_PASSPHRASE='correct horse battery staple'
 BORG_ENCRYPTION="repokey-blake2"
 ```
 
-Valid `BORG_ENCRYPTION` values for Borg 1.x: `none`, `authenticated`,
+Valori validi di `BORG_ENCRYPTION` per Borg 1.x: `none`, `authenticated`,
 `authenticated-blake2`, `repokey`, `repokey-blake2`, `keyfile`,
-`keyfile-blake2`. `repokey*` stores the key inside the repository (convenient,
-protected by the passphrase); `keyfile*` stores it in `~/.config/borg/keys`
-(the repository is useless without that file - back it up separately).
+`keyfile-blake2`. `repokey*` conserva la chiave dentro il repository (comodo,
+protetto dalla passphrase); `keyfile*` la conserva in
+`~/.config/borg/keys` (il repository è inutilizzabile senza quel file -
+faccine un backup separato).
 
-`validate_config` refuses to run any operation if `REPO_URI` or
-`REPO_PASSPHRASE` is empty, even for an unencrypted repository. If you really
-use `--encryption=none`, set `REPO_PASSPHRASE` to any non-empty placeholder;
-Borg ignores it.
+`validate_config` rifiuta di eseguire qualsiasi operazione se `REPO_URI` o
+`REPO_PASSPHRASE` sono vuoti, anche per un repository non cifrato. Se usi
+davvero `--encryption=none`, imposta `REPO_PASSPHRASE` a un qualunque
+segnaposto non vuoto; Borg lo ignora.
 
 ### Backup
 
-| Variable | Type | Default | Description |
+| Variabile | Tipo | Default | Descrizione |
 |---|---|---|---|
-| `BACKUP_PATH` | space-separated paths | (empty) | What to back up. Required for the `backup` operation. |
-| `BACKUP_EXCLUDE` | **semicolon**-separated patterns | (empty) | Exclusion patterns. Each non-empty item becomes one `--exclude` argument. |
-| `ARCHIVE_NAME` | string | (empty) | Archive name. If empty, `backup` generates `archive-YYYYmmdd-HHMMSS`. |
-| `RESTORE_PATH` | path | (empty) | Destination directory for `extract`. Falls back to the current directory if unset. |
-| `MOUNT_PATH` | path | `/mnt/borg` | Mount point for `mount`. Created automatically if missing. |
+| `BACKUP_PATH` | percorsi separati da spazi | (vuoto) | Cosa sottoporre a backup. Richiesta per l'operazione `backup`. |
+| `BACKUP_EXCLUDE` | pattern separati da **punto e virgola** | (vuoto) | Pattern di esclusione. Ogni elemento non vuoto diventa un argomento `--exclude`. |
+| `ARCHIVE_NAME` | stringa | (vuoto) | Nome dell'archivio. Se vuoto, `backup` genera `archive-YYYYmmdd-HHMMSS`. |
+| `RESTORE_PATH` | percorso | (vuoto) | Directory di destinazione per `extract`. Ricade sulla directory corrente se non impostata. |
+| `MOUNT_PATH` | percorso | `/mnt/borg` | Punto di mount per `mount`. Creato automaticamente se mancante. |
 
 ```bash
 BACKUP_PATH="/home /etc /var/www"
@@ -342,150 +352,161 @@ RESTORE_PATH="/tmp/restore"
 MOUNT_PATH="/mnt/borg"
 ```
 
-Two separators are in play and mixing them is the most frequent configuration
-mistake:
+Sono in gioco due separatori diversi, e mescolarli è l'errore di
+configurazione più frequente:
 
-- `BACKUP_PATH` is **space**-separated (it is word-split into a list of backup
-  targets).
-- `BACKUP_EXCLUDE` is **semicolon**-separated (it is split with
-  `IFS=';' read -ra`). A space inside `BACKUP_EXCLUDE` is part of the pattern,
-  not a separator, and exclusion patterns containing spaces work correctly:
-  the Borg command line is built as a Bash array, not by string concatenation.
-  Empty items between semicolons are skipped, so a trailing `;` is harmless.
+- `BACKUP_PATH` è separata da **spazi** (viene suddivisa in parole in un
+  elenco di destinazioni di backup).
+- `BACKUP_EXCLUDE` è separata da **punto e virgola** (viene suddivisa con
+  `IFS=';' read -ra`). Uno spazio dentro `BACKUP_EXCLUDE` fa parte del
+  pattern, non è un separatore, e i pattern di esclusione contenenti spazi
+  funzionano correttamente: la riga di comando Borg viene costruita come un
+  array Bash, non per concatenazione di stringhe. Gli elementi vuoti tra i
+  punto e virgola vengono ignorati, quindi un `;` finale è innocuo.
 
-`BACKUP_PATH` is still word-split, so **backup source paths containing spaces
-cannot be expressed**. Use a symlink or a path without spaces.
+`BACKUP_PATH` è comunque suddivisa in parole, quindi **i percorsi sorgente del
+backup contenenti spazi non possono essere espressi**. Usa un symlink o un
+percorso senza spazi.
 
-`ARCHIVE_NAME` is used literally. Borg's own placeholder syntax
-(`{hostname}-{now:%Y%m%d}`) is passed through unmodified and does work for
-`borg create`, but the script's log and audit records would then contain the
-uninterpolated template rather than the final archive name. For readable audit
-trails prefer leaving `ARCHIVE_NAME` empty, or computing it in the config file:
+`ARCHIVE_NAME` viene usata letteralmente. La sintassi dei segnaposto propria
+di Borg (`{hostname}-{now:%Y%m%d}`) passa inalterata e funziona davvero per
+`borg create`, ma il log e i record di audit dello script conterrebbero poi il
+template non interpolato invece del nome finale dell'archivio. Per audit trail
+leggibili preferisci lasciare `ARCHIVE_NAME` vuota, oppure calcolarla nel file
+di configurazione:
 
 ```bash
 ARCHIVE_NAME="$(hostname -s)-$(date +%Y%m%d-%H%M%S)"
 ```
 
-### Borg and SSH options
+### Opzioni Borg e SSH
 
-| Variable | Type | Default | Description |
+| Variabile | Tipo | Default | Descrizione |
 |---|---|---|---|
-| `BORG_OPT` | string | (empty) | Extra options inserted into `borg create`. Word-split, so no single argument may contain spaces. |
-| `SSH_OPT` | string | `-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5` | SSH client options used to build `BORG_RSH` for remote repositories. |
-| `SSH_PORT` | integer | `22` | SSH port for remote repositories. |
+| `BORG_OPT` | stringa | (vuoto) | Opzioni aggiuntive inserite in `borg create`. Suddivisa in parole, quindi nessun singolo argomento può contenere spazi. |
+| `SSH_OPT` | stringa | `-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5` | Opzioni del client SSH usate per costruire `BORG_RSH` per i repository remoti. |
+| `SSH_PORT` | intero | `22` | Porta SSH per i repository remoti. |
 
-`SSH_OPT` and `SSH_PORT` are wired up automatically. `setup_borg_env` inspects
-`REPO_URI` before every Borg call and, when it begins with `ssh://`, exports:
+`SSH_OPT` e `SSH_PORT` sono collegate automaticamente. `setup_borg_env`
+ispeziona `REPO_URI` prima di ogni chiamata a Borg e, quando inizia con
+`ssh://`, esporta:
 
 ```
 BORG_RSH="ssh $SSH_OPT -p $SSH_PORT"
 ```
 
-For a local repository it unsets `BORG_RSH` instead, so a stale value cannot
-leak in. **You do not need to export `BORG_RSH` yourself.** The defaults
-already give you the three options that matter for unattended backups:
-`BatchMode=yes` so a broken key fails fast instead of prompting,
-`StrictHostKeyChecking=accept-new` so a first connection succeeds and the host
-key is then pinned, and `ConnectTimeout=5` so an unreachable server does not
-consume the whole backup window.
+Per un repository locale annulla invece `BORG_RSH`, così un valore residuo non
+può filtrare. **Non hai bisogno di esportare `BORG_RSH` da solo.** I default
+già ti danno le tre opzioni che contano per i backup non presidiati:
+`BatchMode=yes` così una chiave rotta fallisce rapidamente invece di chiedere
+conferma, `StrictHostKeyChecking=accept-new` così una prima connessione riesce
+e la chiave dell'host viene poi fissata, e `ConnectTimeout=5` così un server
+irraggiungibile non consuma l'intera finestra di backup.
 
-Override `SSH_OPT` when you need a specific key or keepalives - remember that
-you are replacing the default, so repeat the options you still want:
+Sovrascrivi `SSH_OPT` quando serve una chiave specifica o dei keepalive -
+ricorda che stai sostituendo il default, quindi ripeti le opzioni che vuoi
+comunque mantenere:
 
 ```bash
 SSH_PORT="2222"
 SSH_OPT="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i /root/.ssh/borg_ed25519 -o ServerAliveInterval=30"
 ```
 
-If Borg is not on the server's non-interactive `PATH`, add to the config file:
+Se Borg non è nel `PATH` non interattivo del server, aggiungi al file di
+configurazione:
 
 ```bash
 export BORG_REMOTE_PATH="/usr/local/bin/borg"
 ```
 
-Useful `BORG_OPT` values:
+Valori utili per `BORG_OPT`:
 
-| Option | Effect |
+| Opzione | Effetto |
 |---|---|
-| `--compression lz4` | Fast, low ratio. Good for large, already-compressed data. |
-| `--compression zstd,10` | Balanced. Good general-purpose choice. |
-| `--compression zstd,22` | Maximum ratio, slow, CPU heavy. |
-| `--stats` | Print deduplicated/compressed size summary at the end. |
-| `--exclude-caches` | Skip directories tagged with `CACHEDIR.TAG`. |
-| `--one-file-system` | Do not cross filesystem boundaries. |
-| `--checkpoint-interval 900` | Checkpoint every 15 minutes so an interrupted large backup can resume. |
-| `--exclude-if-present .nobackup` | Skip directories containing a marker file. |
+| `--compression lz4` | Veloce, rapporto basso. Buono per dati grandi e già compressi. |
+| `--compression zstd,10` | Bilanciato. Buona scelta generica. |
+| `--compression zstd,22` | Rapporto massimo, lento, pesante per la CPU. |
+| `--stats` | Stampa un riepilogo delle dimensioni deduplicate/compresse alla fine. |
+| `--exclude-caches` | Salta le directory contrassegnate con `CACHEDIR.TAG`. |
+| `--one-file-system` | Non attraversa confini di filesystem. |
+| `--checkpoint-interval 900` | Checkpoint ogni 15 minuti in modo che un backup grande interrotto possa riprendere. |
+| `--exclude-if-present .nobackup` | Salta le directory contenenti un file marcatore. |
 
-`BORG_OPT` applies to `borg create` only. It is not passed to `check`,
-`prune`, `info` or the other operations.
+`BORG_OPT` si applica solo a `borg create`. Non viene passata a `check`,
+`prune`, `info` o alle altre operazioni.
 
 ### Retention
 
-| Variable | Type | Default | Description |
+| Variabile | Tipo | Default | Descrizione |
 |---|---|---|---|
-| `KEEP_LAST` | integer | **`10`** | Keep the N most recent archives regardless of age. |
-| `KEEP_HOURLY` | integer | (empty) | Keep the newest archive of each of the last N hours. |
-| `KEEP_DAILY` | integer | **`7`** | Keep the newest archive of each of the last N days. |
-| `KEEP_WEEKLY` | integer | **`4`** | Keep the newest archive of each of the last N weeks. |
-| `KEEP_MONTHLY` | integer | **`12`** | Keep the newest archive of each of the last N months. |
-| `KEEP_YEARLY` | integer | (empty) | Keep the newest archive of each of the last N years. |
+| `KEEP_LAST` | intero | **`10`** | Mantieni gli N archivi più recenti indipendentemente dall'età. |
+| `KEEP_HOURLY` | intero | (vuoto) | Mantieni l'archivio più recente per ciascuna delle ultime N ore. |
+| `KEEP_DAILY` | intero | **`7`** | Mantieni l'archivio più recente per ciascuno degli ultimi N giorni. |
+| `KEEP_WEEKLY` | intero | **`4`** | Mantieni l'archivio più recente per ciascuna delle ultime N settimane. |
+| `KEEP_MONTHLY` | intero | **`12`** | Mantieni l'archivio più recente per ciascuno degli ultimi N mesi. |
+| `KEEP_YEARLY` | intero | (vuoto) | Mantieni l'archivio più recente per ciascuno degli ultimi N anni. |
 
-A rule is applied only when its value is non-empty **and** not `"0"`. Both
-`KEEP_HOURLY=""` and `KEEP_HOURLY="0"` disable the hourly rule.
+Una regola viene applicata solo quando il suo valore è non vuoto **e** diverso
+da `"0"`. Sia `KEEP_HOURLY=""` sia `KEEP_HOURLY="0"` disabilitano la regola
+oraria.
 
-Note the non-empty defaults: unless your config says otherwise, `prune` runs
-with `--keep-last=10 --keep-daily=7 --keep-weekly=4 --keep-monthly=12`. See
-[Retention policy](#retention-policy).
+Nota i default non vuoti: a meno che la tua configurazione non dica altro,
+`prune` gira con
+`--keep-last=10 --keep-daily=7 --keep-weekly=4 --keep-monthly=12`. Vedi
+[Politica di retention](#politica-di-retention).
 
 ### Logging
 
-| Variable | Type | Default | Description |
+| Variabile | Tipo | Default | Descrizione |
 |---|---|---|---|
-| `LOG_FILE` | path | (empty) | Human-readable log. Appended to by `log()`, and Borg's combined output is `tee`d into it. When empty, Borg output simply goes to stdout. |
-| `AUDIT_LOG_FILE` | path | (empty) | Structured audit trail, one line per completed operation. When empty, auditing is silently disabled. |
+| `LOG_FILE` | percorso | (vuoto) | Log leggibile per l'uomo. Viene appeso da `log()`, e l'output combinato di Borg viene rediretto (`tee`) al suo interno. Quando è vuoto, l'output di Borg va semplicemente su stdout. |
+| `AUDIT_LOG_FILE` | percorso | (vuoto) | Audit trail strutturato, una riga per operazione completata. Quando è vuoto, l'audit viene silenziosamente disabilitato. |
 
 ```bash
 LOG_FILE="/var/log/tngbackup.log"
 AUDIT_LOG_FILE="/var/log/tngbackup-audit.log"
 ```
 
-When these are set with `--log` / `--audit-log` the script creates the files and
-applies mode 600. When they are set in the configuration file instead, the
-files are appended to as-is; create them with the right permissions yourself,
-or let `install.sh` do it:
+Quando queste sono impostate con `--log` / `--audit-log` lo script crea i file
+e applica la modalità 600. Quando invece sono impostate nel file di
+configurazione, i file vengono appesi così come sono; creali tu con i permessi
+giusti, oppure lascia che lo faccia `install.sh`:
 
 ```bash
 sudo install -m 0600 /dev/null /var/log/tngbackup.log
 sudo install -m 0600 /dev/null /var/log/tngbackup-audit.log
 ```
 
-Writes to `LOG_FILE` are best-effort: if the file becomes unwritable mid-run,
-the message is dropped rather than aborting the backup.
+Le scritture su `LOG_FILE` sono best-effort: se il file diventa non scrivibile
+a metà esecuzione, il messaggio viene scartato invece di far abortire il
+backup.
 
 ---
 
-## Repository URI formats
+## Formati dell'URI del repository
 
-### Local repository
+### Repository locale
 
-An absolute path on a locally mounted filesystem:
+Un percorso assoluto su un filesystem montato localmente:
 
 ```bash
 REPO_URI="/mnt/backup/borg-repo"
 REPO_URI="/srv/borg/webserver"
 ```
 
-The parent directory must exist and be writable. The repository directory
-itself is created by `borg init`. For a local URI the script explicitly unsets
-`BORG_RSH`, so `SSH_OPT` and `SSH_PORT` are ignored.
+La directory padre deve esistere ed essere scrivibile. La directory del
+repository stessa viene creata da `borg init`. Per un URI locale lo script
+annulla esplicitamente `BORG_RSH`, quindi `SSH_OPT` e `SSH_PORT` vengono
+ignorate.
 
-A local path may point at a network filesystem (NFS, CIFS, sshfs), but this is
-discouraged: Borg's locking and fsync behaviour over network filesystems is
-fragile, and performance is much worse than a real `ssh://` repository, because
-every chunk lookup becomes a network round trip. Prefer `ssh://` whenever the
-target machine can run Borg.
+Un percorso locale può puntare a un filesystem di rete (NFS, CIFS, sshfs), ma
+questo è sconsigliato: il comportamento di locking e fsync di Borg su
+filesystem di rete è fragile, e le prestazioni sono molto peggiori di un vero
+repository `ssh://`, perché ogni ricerca di chunk diventa un round trip di
+rete. Preferisci `ssh://` ogni volta che la macchina di destinazione può
+eseguire Borg.
 
-### SSH repository
+### Repository SSH
 
 ```
 ssh://user@host:port/absolute/path/to/repo
@@ -494,7 +515,7 @@ ssh://user@host/./relative/to/home             # ./ means relative to $HOME
 ssh://user@host/~/backups/repo                 # ~ expansion on the remote side
 ```
 
-Examples:
+Esempi:
 
 ```bash
 REPO_URI="ssh://borg@backup.example.com:22/srv/borg/webserver"
@@ -502,43 +523,48 @@ REPO_URI="ssh://borg@10.0.0.20:2222/mnt/raid/borg/db"
 REPO_URI="ssh://backup@nas.lan/./borg/home"
 ```
 
-An `ssh://` URI triggers `BORG_RSH="ssh $SSH_OPT -p $SSH_PORT"` automatically.
-Keep `SSH_PORT` consistent with any port written into the URI itself.
+Un URI `ssh://` attiva automaticamente `BORG_RSH="ssh $SSH_OPT -p $SSH_PORT"`.
+Mantieni `SSH_PORT` coerente con qualsiasi porta scritta nell'URI stesso.
 
-Requirements for a remote repository:
+Requisiti per un repository remoto:
 
-1. Borg must be installed on the **remote** host too, and the versions should
-   be compatible (same major/minor family).
-2. Key-based authentication must work non-interactively:
+1. Borg deve essere installato anche sull'host **remoto**, e le versioni
+   dovrebbero essere compatibili (stessa famiglia major/minor).
+2. L'autenticazione basata su chiave deve funzionare in modo non
+   interattivo:
    ```bash
    ssh -o BatchMode=yes -p 22 borg@backup.example.com borg --version
    ```
-   If that command prompts for anything, fix it before scheduling a backup.
-3. The remote path's parent must exist and be writable by the SSH user.
+   Se quel comando chiede qualcosa, sistemalo prima di pianificare un backup.
+3. La directory padre del percorso remoto deve esistere ed essere scrivibile
+   dall'utente SSH.
 
-Hardening the remote side: restrict the key in the server's
-`~/.ssh/authorized_keys` so it can only serve one repository:
+Irrobustire il lato remoto: restringi la chiave in
+`~/.ssh/authorized_keys` del server così che possa servire solo un
+repository:
 
 ```
 command="borg serve --restrict-to-repository /srv/borg/webserver --append-only",restrict ssh-ed25519 AAAA... borg@client
 ```
 
-`--append-only` means a compromised client can add archives but cannot delete
-history - a good defence against ransomware that hunts for backups. Note that
-with `--append-only` on the server, `prune`, `delete` and `compact` from the
-client will not actually free space; you compact on the server instead.
+`--append-only` significa che un client compromesso può aggiungere archivi ma
+non può cancellare la cronologia - una buona difesa contro il ransomware che
+va a caccia di backup. Nota che con `--append-only` sul server, `prune`,
+`delete` e `compact` dal client non libereranno realmente spazio; la
+compattazione va fatta sul server.
 
 ---
 
-## Dry-run mode
+## Modalità dry-run
 
-`DRYRUN=y` makes every Borg invocation print instead of execute. `run_borg`
-logs the exact command as `[DRY-RUN] borg ...` and returns success, so the
-operation reports `SUCCESS` and writes a normal audit record without touching
-the repository. Directory creation for `mount` and `extract` is skipped too.
+`DRYRUN=y` fa sì che ogni invocazione di Borg stampi invece di eseguire.
+`run_borg` registra il comando esatto come `[DRY-RUN] borg ...` e restituisce
+successo, quindi l'operazione riporta `SUCCESS` e scrive un normale record di
+audit senza toccare il repository. Anche la creazione di directory per
+`mount` ed `extract` viene saltata.
 
-It is set from the environment or the config file - there is no CLI flag, and
-it does **not** require `DEBUG`:
+Viene impostata dall'ambiente o dal file di configurazione - non esiste un
+flag CLI, e **non** richiede `DEBUG`:
 
 ```bash
 # One-off, from the environment
@@ -554,7 +580,7 @@ DRYRUN=y tngbackup prune --config /etc/tngbackup.conf
 DRYRUN=y tngbackup backup --config /etc/tngbackup/
 ```
 
-Sample output:
+Esempio di output:
 
 ```
 [2026-09-05 12:41:03] [INFO] Starting backup from: /home /etc /var/www
@@ -563,66 +589,72 @@ Sample output:
 [2026-09-05 12:41:03] [INFO] Operation 'backup' finished with status SUCCESS in 0s
 ```
 
-Use it to verify a new config, a changed exclusion list, or a batch directory
-before it runs unattended for the first time.
+Usala per verificare una nuova configurazione, un elenco di esclusioni
+modificato, o una directory batch prima che venga eseguita senza presidio per
+la prima volta.
 
-Two limits to keep in mind:
+Due limiti da tenere a mente:
 
-- Configuration validation still applies, so `REPO_URI`, `REPO_PASSPHRASE` and
-  a `borg` binary on `PATH` are all still required for a dry run.
-- A dry run always reports `SUCCESS`, because no command actually ran. It
-  proves what *would* be executed, not that the repository is reachable or the
-  passphrase correct. For that, run a real `list`.
+- La validazione della configurazione si applica comunque, quindi `REPO_URI`,
+  `REPO_PASSPHRASE` e un binario `borg` nel `PATH` sono tutti ancora
+  richiesti anche per un dry run.
+- Un dry run riporta sempre `SUCCESS`, perché nessun comando è stato
+  effettivamente eseguito. Dimostra ciò che *verrebbe* eseguito, non che il
+  repository sia raggiungibile o la passphrase corretta. Per quello, esegui un
+  vero `list`.
 
-Borg's own `--dry-run` is a different thing and remains available through
-`BORG_OPT` (`BORG_OPT="--dry-run --list"`), which does contact the repository
-and reports the files that would be archived.
+Il `--dry-run` proprio di Borg è una cosa diversa e resta disponibile tramite
+`BORG_OPT` (`BORG_OPT="--dry-run --list"`), che contatta davvero il repository
+e riporta i file che verrebbero archiviati.
 
 ---
 
-## Operations
+## Operazioni
 
-Every operation is invoked the same way:
+Ogni operazione viene invocata allo stesso modo:
 
 ```bash
 tngbackup OPERATION [OPTIONS]
 ```
 
-All operations require `REPO_URI` and `REPO_PASSPHRASE` (from config,
-environment, or `-r`/`-p`), and require `borg` on `PATH`. Every one of them
-calls `setup_borg_env` first, so `BORG_REPO`, `BORG_PASSPHRASE` and - for
-`ssh://` - `BORG_RSH` are in place, and every one finishes through
-`finish_operation`, which writes the audit record and sets the process exit
-code from the Borg result.
+Tutte le operazioni richiedono `REPO_URI` e `REPO_PASSPHRASE` (da
+configurazione, ambiente, o `-r`/`-p`), e richiedono `borg` nel `PATH`. Ognuna
+di esse chiama prima `setup_borg_env`, così `BORG_REPO`, `BORG_PASSPHRASE` e -
+per `ssh://` - `BORG_RSH` sono al loro posto, e ognuna termina attraverso
+`finish_operation`, che scrive il record di audit e imposta il codice di
+uscita del processo in base al risultato di Borg.
 
-`finish_operation` follows Borg's own three-way exit-code convention:
+`finish_operation` segue la convenzione a tre vie dei codici di uscita propria
+di Borg:
 
-| Borg exit | Status | Logged as | `tngbackup` exits |
+| Uscita Borg | Stato | Registrato come | `tngbackup` esce con |
 |---|---|---|---|
 | `0` | `SUCCESS` | `INFO`: `<op> completed successfully` | `0` |
 | `1` | `WARNING` | `WARN`: `<op> completed with warnings (borg exit 1)` | `0` |
-| `>= 2` | `FAILED` | `ERROR`: `<op> failed (borg exit N)` | that code |
+| `>= 2` | `FAILED` | `ERROR`: `<op> failed (borg exit N)` | quel codice |
 
-A warning means the operation completed and did what it was asked - a backup
-that could not read a handful of files still produced an archive - so it is
-deliberately **not** treated as a failure. It is still recorded distinctly in
-the audit log, so you can monitor for it separately.
+Un warning significa che l'operazione si è completata ed ha fatto ciò che le
+era stato chiesto - un backup che non ha potuto leggere una manciata di file
+ha comunque prodotto un archivio - quindi deliberatamente **non** viene
+trattato come un fallimento. Viene comunque registrato distintamente
+nell'audit log, così puoi monitorarlo separatamente.
 
-Failures detected by the script *before* Borg is invoked - a missing
-`--archive` for `delete`/`extract`, an unconfigured retention policy for
-`prune`, an unwritable mountpoint or restore directory - bypass this table:
-they set `FAILED` directly and exit 1.
+I fallimenti rilevati dallo script *prima* che Borg venga invocato - un
+`--archive` mancante per `delete`/`extract`, una politica di retention non
+configurata per `prune`, un mountpoint o una directory di ripristino non
+scrivibili - saltano questa tabella: impostano direttamente `FAILED` ed
+escono con 1.
 
-Because `BORG_REPO` is exported, most operations address the repository
-implicitly and archives with the `::name` shorthand.
+Poiché `BORG_REPO` è esportata, la maggior parte delle operazioni indirizza il
+repository implicitamente e gli archivi con la scorciatoia `::name`.
 
 ### init
 
-Creates a new, empty Borg repository at `REPO_URI` using `BORG_ENCRYPTION`.
+Crea un nuovo repository Borg vuoto in `REPO_URI` usando `BORG_ENCRYPTION`.
 
-Runs: `borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI"`
+Esegue: `borg init --encryption="$BORG_ENCRYPTION" "$REPO_URI"`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`. **Optional:** `BORG_ENCRYPTION`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`. **Opzionale:** `BORG_ENCRYPTION`.
 
 ```bash
 # From a config file
@@ -636,7 +668,7 @@ tngbackup init --config /etc/tngbackup/webserver.conf \
                --repo ssh://borg@backup.example.com:22/srv/borg/web
 ```
 
-Sample output:
+Esempio di output:
 
 ```
 [2026-09-05 02:15:11] [INFO] Initializing repository: /mnt/backup/borg-repo
@@ -644,42 +676,44 @@ Sample output:
 [2026-09-05 02:15:12] [INFO] Operation 'init' finished with status SUCCESS in 1s
 ```
 
-Immediately afterwards, export and store the repository key somewhere other
-than the repository:
+Subito dopo, esporta e conserva la chiave del repository da qualche parte
+diverso dal repository stesso:
 
 ```bash
 BORG_PASSPHRASE='...' borg key export /mnt/backup/borg-repo /root/borg-web.key
 chmod 600 /root/borg-web.key
 ```
 
-Without the passphrase (and, for `keyfile` modes, the key file) the repository
-is permanently unreadable. There is no recovery path.
+Senza la passphrase (e, per le modalità `keyfile`, il file chiave) il
+repository diventa permanentemente illeggibile. Non esiste un percorso di
+recupero.
 
-Common errors:
+Errori comuni:
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `A repository already exists at ...` | `init` was run twice | Nothing to do; the repository is already there. |
-| `Missing required configuration: REPO_URI` | No repo configured | Set `REPO_URI` or pass `--repo`. |
-| `borg binary not found in PATH` | Borg not installed | Install `borgbackup`. |
-| `Permission denied` on the parent directory | Cannot create the repo dir | `mkdir -p` the parent and fix ownership. |
-| SSH connection refused/timed out | Wrong host, port or key | Test with `ssh -o BatchMode=yes -p PORT user@host borg --version`. |
+| `A repository already exists at ...` | `init` è stato eseguito due volte | Niente da fare; il repository esiste già. |
+| `Missing required configuration: REPO_URI` | Nessun repository configurato | Imposta `REPO_URI` o passa `--repo`. |
+| `borg binary not found in PATH` | Borg non installato | Installa `borgbackup`. |
+| `Permission denied` sulla directory padre | Impossibile creare la directory del repo | Esegui `mkdir -p` sulla directory padre e correggi la proprietà. |
+| Connessione SSH rifiutata/scaduta | Host, porta o chiave errati | Verifica con `ssh -o BatchMode=yes -p PORT user@host borg --version`. |
 
 ### backup
 
-Creates one archive containing `BACKUP_PATH`, honouring `BACKUP_EXCLUDE` and
+Crea un archivio contenente `BACKUP_PATH`, rispettando `BACKUP_EXCLUDE` e
 `BORG_OPT`.
 
-Runs: `borg create [BORG_OPT words] [--exclude PATTERN]... ::ARCHIVE_NAME PATHS...`
+Esegue: `borg create [BORG_OPT words] [--exclude PATTERN]... ::ARCHIVE_NAME PATHS...`
 
-The command line is assembled as a Bash array, so exclusion patterns with
-spaces are safe. `BORG_OPT` and `BACKUP_PATH` are deliberately word-split.
+La riga di comando viene assemblata come un array Bash, quindi i pattern di
+esclusione con spazi sono sicuri. `BORG_OPT` e `BACKUP_PATH` vengono
+deliberatamente suddivisi in parole.
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`, `BACKUP_PATH`.
-**Optional:** `BACKUP_EXCLUDE`, `ARCHIVE_NAME`, `BORG_OPT`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`, `BACKUP_PATH`.
+**Opzionale:** `BACKUP_EXCLUDE`, `ARCHIVE_NAME`, `BORG_OPT`.
 
-If `ARCHIVE_NAME` is empty, `archive-YYYYmmdd-HHMMSS` is generated from the
-local clock.
+Se `ARCHIVE_NAME` è vuota, viene generato `archive-YYYYmmdd-HHMMSS` a partire
+dall'orologio locale.
 
 ```bash
 # Standard: everything from the config file
@@ -697,7 +731,7 @@ tngbackup backup --config /etc/tngbackup.conf \
                  --audit-log /var/log/tngbackup-audit.log
 ```
 
-Sample output with `BORG_OPT="--stats"`:
+Esempio di output con `BORG_OPT="--stats"`:
 
 ```
 [2026-09-05 03:00:01] [INFO] Starting backup from: /home /etc /var/www
@@ -717,88 +751,91 @@ All archives:              612.44 GB            420.10 GB             52.87 GB
 [2026-09-05 03:04:47] [INFO] Operation 'backup' finished with status SUCCESS in 286s
 ```
 
-Notes:
+Note:
 
-- Backups are **not** pruned automatically unless `PRUNE_BACKUP` is set (see
-  below). Otherwise run `prune` (and `compact`) as separate steps - see
-  [Scheduling](#scheduling).
-- Consecutive backups of the same data are cheap: Borg deduplicates at the
-  chunk level, so an unchanged 40 GB tree costs a few megabytes.
-- Borg exit code 1 means "completed with warnings" (unreadable or vanished
-  files, say). The archive *was* created, so TNGBackup records the run
-  `WARNING`, logs `backup completed with warnings (borg exit 1)` and **exits
-  0**. A warning is not a failure; check the log to see which files were
-  skipped.
-- For consistent database backups, dump first and back up the dump - see
-  `docs/examples/batch-configs/database.conf`.
+- I backup **non** vengono potati (`pruned`) automaticamente a meno che
+  `PRUNE_BACKUP` non sia impostato (vedi sotto). Altrimenti esegui `prune` (e
+  `compact`) come passi separati - vedi [Pianificazione](#pianificazione).
+- Backup consecutivi degli stessi dati sono economici: Borg deduplica a
+  livello di chunk, quindi un albero di 40 GB immutato costa pochi megabyte.
+- Il codice di uscita 1 di Borg significa "completato con warning" (file
+  illeggibili o spariti, ad esempio). L'archivio *è stato* creato, quindi
+  TNGBackup registra l'esecuzione come `WARNING`, logga
+  `backup completed with warnings (borg exit 1)` e **esce con 0**. Un
+  warning non è un fallimento; controlla il log per vedere quali file sono
+  stati saltati.
+- Per backup di database coerenti, esegui prima il dump e poi fai il backup
+  del dump - vedi `docs/examples/batch-configs/database.conf`.
 
-Common errors:
+Errori comuni:
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `BACKUP_PATH not set; no files to backup` | Missing source | Set `BACKUP_PATH` or pass `--path`. |
-| `Repository ... does not exist` | Never initialised and `CREATE_REPO=n` | Run `tngbackup init` first, or leave `CREATE_REPO=y` (the default) to auto-create it. |
-| `Failed to create/acquire the lock` | Concurrent run or stale lock | See [Troubleshooting](#troubleshooting). |
-| `passphrase supplied ... is incorrect` | Wrong `REPO_PASSPHRASE` | Fix the config; a repository cannot be recovered without the right passphrase. |
-| `Archive ... already exists` | Duplicate `ARCHIVE_NAME` | Use a unique name or leave `ARCHIVE_NAME` empty. |
-| `No space left on device` | Repository filesystem full | Prune and compact, or add capacity. |
+| `BACKUP_PATH not set; no files to backup` | Sorgente mancante | Imposta `BACKUP_PATH` o passa `--path`. |
+| `Repository ... does not exist` | Mai inizializzato e `CREATE_REPO=n` | Esegui prima `tngbackup init`, oppure lascia `CREATE_REPO=y` (il default) per crearlo automaticamente. |
+| `Failed to create/acquire the lock` | Esecuzione concorrente o lock residuo | Vedi [Risoluzione dei problemi](#risoluzione-dei-problemi). |
+| `passphrase supplied ... is incorrect` | `REPO_PASSPHRASE` errata | Correggi la configurazione; un repository non può essere recuperato senza la passphrase giusta. |
+| `Archive ... already exists` | `ARCHIVE_NAME` duplicata | Usa un nome univoco o lascia `ARCHIVE_NAME` vuota. |
+| `No space left on device` | Filesystem del repository pieno | Esegui prune e compact, oppure aggiungi capacità. |
 
-#### Backup hooks (`PRERUN` / `POSTRUN`)
+#### Hook di backup (`PRERUN` / `POSTRUN`)
 
-Run a command or script immediately before and/or after the backup:
+Esegue un comando o uno script immediatamente prima e/o dopo il backup:
 
-- **`PRERUN`**: runs before `borg create`. If it exits non-zero, the backup is
-  **aborted** (recorded as `FAILED`, audit-logged with details `PRERUN hook
-  failed`) and `borg create` never runs.
-- **`POSTRUN`**: always runs after the backup attempt (success, warning, or
-  failure). Its own exit status is only logged (`WARN` if non-zero) and never
-  changes the backup's recorded status.
+- **`PRERUN`**: viene eseguito prima di `borg create`. Se esce con codice non
+  zero, il backup viene **abortito** (registrato come `FAILED`, con dettaglio
+  `PRERUN hook failed` nell'audit log) e `borg create` non viene mai eseguito.
+- **`POSTRUN`**: viene sempre eseguito dopo il tentativo di backup (successo,
+  warning o fallimento). Il suo stesso stato di uscita viene solo loggato
+  (`WARN` se diverso da zero) e non cambia mai lo stato registrato del backup.
 
-Both are executed with `bash -c "$PRERUN"` / `bash -c "$POSTRUN"`, so they can
-be a single command or a `&&`/`;`-chained sequence, and both honour `DRYRUN`
-(logged as `[DRY-RUN] PRERUN: ...` / `[DRY-RUN] POSTRUN: ...` without actually
-running).
+Entrambi vengono eseguiti con `bash -c "$PRERUN"` / `bash -c "$POSTRUN"`,
+quindi possono essere un singolo comando o una sequenza concatenata con
+`&&`/`;`, ed entrambi rispettano `DRYRUN` (registrati come
+`[DRY-RUN] PRERUN: ...` / `[DRY-RUN] POSTRUN: ...` senza essere eseguiti
+davvero).
 
 ```bash
 PRERUN="mysqldump -u root -p$DB_PASS mydb > /tmp/mydb.sql"
 POSTRUN="rm -f /tmp/mydb.sql"
 ```
 
-#### Repository auto-creation (`CREATE_REPO` / `CREATE_REPO_DIR`)
+#### Auto-creazione del repository (`CREATE_REPO` / `CREATE_REPO_DIR`)
 
-- **`CREATE_REPO`** (default `y`): if the repository does not exist yet,
-  `backup` initializes it automatically (`borg init --encryption=$BORG_ENCRYPTION`)
-  before proceeding, instead of failing with `Repository ... does not exist`.
-  Set to `n` to require an explicit `tngbackup init` beforehand.
-- **`CREATE_REPO_DIR`** (default `y`, local repositories only): creates the
-  parent directory of `REPO_URI` if it is missing, before checking whether the
-  repository itself exists.
+- **`CREATE_REPO`** (default `y`): se il repository non esiste ancora,
+  `backup` lo inizializza automaticamente (`borg init --encryption=$BORG_ENCRYPTION`)
+  prima di procedere, invece di fallire con `Repository ... does not exist`.
+  Imposta a `n` per richiedere un esplicito `tngbackup init` preventivo.
+- **`CREATE_REPO_DIR`** (default `y`, solo repository locali): crea la
+  directory padre di `REPO_URI` se manca, prima di controllare se il
+  repository stesso esiste.
 
-For a local `REPO_URI`, existence is checked cheaply by looking for a
-`config` file inside the repository directory (how a Borg repository looks on
-disk) - this avoids relying on `borg info`'s exit code, which can be non-zero
-for unrelated reasons (a stale lock, a transient error) and would otherwise
-risk re-initializing a perfectly healthy repository. For an `ssh://`
-repository there is no such shortcut, so `borg info` is used as a best-effort
-probe instead.
+Per un `REPO_URI` locale, l'esistenza viene verificata in modo economico
+cercando un file `config` dentro la directory del repository (così appare un
+repository Borg sul disco) - questo evita di affidarsi al codice di uscita di
+`borg info`, che può essere diverso da zero per motivi non correlati (un lock
+residuo, un errore transitorio) e altrimenti rischierebbe di reinizializzare
+un repository perfettamente sano. Per un repository `ssh://` non esiste questa
+scorciatoia, quindi `borg info` viene usato come sonda best-effort.
 
-Under `DRYRUN=y`, nothing is created or touched; the log states what
-would happen (`[DRY-RUN] Would initialize repository if missing: ...`).
+Sotto `DRYRUN=y`, non viene creato o toccato nulla; il log riporta cosa
+succederebbe (`[DRY-RUN] Would initialize repository if missing: ...`).
 
-#### Companion operations (`CHECK_BACKUP` / `PRUNE_BACKUP` / `COMPACT_BACKUP`)
+#### Operazioni companion (`CHECK_BACKUP` / `PRUNE_BACKUP` / `COMPACT_BACKUP`)
 
-Run `check`, `prune` and/or `compact` automatically around the backup, each as
-its own operation with its own audit log entry (so you keep the same
-per-phase traceability as running them by hand). Each variable takes:
+Esegue automaticamente `check`, `prune` e/o `compact` attorno al backup,
+ognuna come propria operazione con la propria voce nell'audit log (così
+mantieni la stessa tracciabilità per fase che avresti eseguendole a mano).
+Ogni variabile accetta:
 
-- `0` - disabled (default)
-- `1` - run before `borg create`
-- `2` - run after `borg create`
+- `0` - disabilitata (default)
+- `1` - eseguita prima di `borg create`
+- `2` - eseguita dopo `borg create`
 
-When several are set to the same phase, they run in this fixed order: `check`,
-`prune`, `compact`. A `check` requested for phase `1` always checks the whole
-repository (`--repository-only`), never a specific archive - the archive
-`backup` is about to create does not exist yet.
+Quando più variabili sono impostate sulla stessa fase, vengono eseguite in
+questo ordine fisso: `check`, `prune`, `compact`. Un `check` richiesto per la
+fase `1` verifica sempre l'intero repository (`--repository-only`), mai un
+archivio specifico - l'archivio che `backup` sta per creare non esiste ancora.
 
 ```bash
 # Full pipeline in one command: check -> backup -> prune -> compact
@@ -807,19 +844,20 @@ PRUNE_BACKUP=2
 COMPACT_BACKUP=2
 ```
 
-None of these three ever abort the backup if they fail: unlike `PRERUN`, a
-failing companion check/prune/compact is only recorded under its own
-operation name in the audit log; `backup` still proceeds (or keeps its own
-result if it already ran).
+Nessuna di queste tre operazioni fa mai abortire il backup se fallisce: a
+differenza di `PRERUN`, un check/prune/compact companion fallito viene
+registrato solo sotto il proprio nome di operazione nell'audit log; `backup`
+procede comunque (o mantiene il proprio risultato se ha già girato).
 
 ### list
 
-With no `--archive`, lists all archives in the repository. With `--archive`,
-lists the files inside that archive.
+Senza `--archive`, elenca tutti gli archivi nel repository. Con `--archive`,
+elenca i file dentro quell'archivio.
 
-Runs: `borg list` (repository, via `BORG_REPO`) or `borg list ::ARCHIVE_NAME`.
+Esegue: `borg list` (repository, tramite `BORG_REPO`) oppure
+`borg list ::ARCHIVE_NAME`.
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`. **Optional:** `ARCHIVE_NAME`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`. **Opzionale:** `ARCHIVE_NAME`.
 
 ```bash
 # All archives
@@ -832,7 +870,7 @@ tngbackup list --config /etc/tngbackup.conf --archive archive-20260905-030001
 tngbackup list --repo /mnt/backup/borg-repo --passphrase 'secret'
 ```
 
-Sample output (repository listing):
+Esempio di output (elenco del repository):
 
 ```
 archive-20260901-030001              Mon, 2026-09-01 03:00:01 [1a2b3c...]
@@ -842,7 +880,7 @@ archive-20260904-030001              Thu, 2026-09-04 03:00:01 [0d1e2f...]
 archive-20260905-030001              Fri, 2026-09-05 03:00:01 [3a4b5c...]
 ```
 
-Sample output (archive listing, truncated):
+Esempio di output (elenco di un archivio, troncato):
 
 ```
 drwxr-xr-x root   root          0 Fri, 2026-09-05 02:11:04 etc
@@ -850,43 +888,46 @@ drwxr-xr-x root   root          0 Fri, 2026-09-05 02:11:04 etc
 -rw-r--r-- root   root       1421 Wed, 2026-07-02 17:45:51 etc/fstab
 ```
 
-Listing a large archive produces a very large amount of output. Pipe it:
+Elencare un archivio grande produce una quantità di output molto grande.
+Incanalalo (pipe):
 
 ```bash
 tngbackup list --config /etc/tngbackup.conf --archive archive-20260905-030001 \
   | grep 'etc/nginx'
 ```
 
-`list` is the cheapest way to verify that credentials and connectivity are
-correct - the recommended repository-existence probe, much faster than `check`.
+`list` è il modo più economico per verificare che le credenziali e la
+connettività siano corrette - la sonda di esistenza del repository
+consigliata, molto più veloce di `check`.
 
-The audit record's details field is the archive name, or `all-archives` for a
-repository listing.
+Il campo dei dettagli del record di audit è il nome dell'archivio, oppure
+`all-archives` per un elenco del repository.
 
-Common errors:
+Errori comuni:
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `Archive ... does not exist` | Typo in `--archive` | Run `list` without `--archive` to see valid names. |
-| `Repository ... does not exist` | Wrong `REPO_URI` | Verify path/URI. |
-| `Connection closed by remote host` | SSH/`borg serve` problem | Test `ssh -o BatchMode=yes host borg --version`. |
+| `Archive ... does not exist` | Refuso in `--archive` | Esegui `list` senza `--archive` per vedere i nomi validi. |
+| `Repository ... does not exist` | `REPO_URI` errato | Verifica il percorso/URI. |
+| `Connection closed by remote host` | Problema SSH/`borg serve` | Verifica con `ssh -o BatchMode=yes host borg --version`. |
 
 ### mount
 
-Mounts the whole repository (every archive as a subdirectory) or a single
-archive at `MOUNT_PATH`, read-only, via FUSE. This is the most convenient way
-to browse and cherry-pick files with ordinary tools.
+Monta l'intero repository (ogni archivio come sottodirectory) oppure un
+singolo archivio in `MOUNT_PATH`, in sola lettura, via FUSE. Questo è il modo
+più comodo per esplorare e recuperare selettivamente file con strumenti
+ordinari.
 
-Runs: `borg mount ::ARCHIVE_NAME "$MOUNT_PATH"`, or
-`borg mount "$REPO_URI" "$MOUNT_PATH"` when no archive is given.
+Esegue: `borg mount ::ARCHIVE_NAME "$MOUNT_PATH"`, oppure
+`borg mount "$REPO_URI" "$MOUNT_PATH"` quando non viene dato alcun archivio.
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`, `MOUNT_PATH` (default `/mnt/borg`).
-**Optional:** `ARCHIVE_NAME`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`, `MOUNT_PATH` (default `/mnt/borg`).
+**Opzionale:** `ARCHIVE_NAME`.
 
-The mount point is **created automatically** if it does not exist (skipped
-under `DRYRUN=y`). On success the script prints the unmount hint and clears
-`MOUNT_PATH` internally, so the cleanup trap will not tear down the mount you
-just asked for.
+Il punto di mount viene **creato automaticamente** se non esiste (saltato
+sotto `DRYRUN=y`). In caso di successo lo script stampa il suggerimento per
+smontare e annulla internamente `MOUNT_PATH`, così il trap di pulizia non
+smonterà il mount che hai appena richiesto.
 
 ```bash
 # Mount the whole repository: one directory per archive
@@ -898,7 +939,7 @@ tngbackup mount --config /etc/tngbackup.conf \
                 --mountpoint /mnt/borg
 ```
 
-Sample output:
+Esempio di output:
 
 ```
 [2026-09-05 10:22:14] [INFO] Mounting archive archive-20260905-030001 on /mnt/borg
@@ -906,7 +947,7 @@ Sample output:
 [2026-09-05 10:22:16] [INFO] mount completed successfully
 ```
 
-Browsing and unmounting:
+Esplorazione e smontaggio:
 
 ```bash
 ls /mnt/borg
@@ -914,39 +955,40 @@ cp /mnt/borg/etc/nginx/nginx.conf /tmp/
 borg umount /mnt/borg
 ```
 
-Note that `borg mount` daemonises by default, so the mount outlives the
-`tngbackup` process - which is why the unmount is left to you. Unmount when
-you are done: a forgotten mount holds a repository lock and will block the
-next backup.
+Nota che `borg mount` per default demonizza, quindi il mount sopravvive al
+processo `tngbackup` - motivo per cui lo smontaggio è lasciato a te. Smonta
+quando hai finito: un mount dimenticato mantiene un lock sul repository e
+bloccherà il prossimo backup.
 
-Requirements and common errors:
+Requisiti ed errori comuni:
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `borg: Unrecognized command mount` / `fuse is not installed` | FUSE bindings missing | `pip install 'borgbackup[fuse]'` or install your distro's `borgbackup-fuse` / `python3-llfuse` package. |
-| `fusermount: failed to open /dev/fuse: Permission denied` | User not allowed to use FUSE | Run as root or add the user to the `fuse` group. |
-| `Cannot create mountpoint: ...` | Parent not writable | Choose a writable path or run as root. |
-| `Device or resource busy` on unmount | A shell or process is inside the mount | `cd` out, then `fuser -mv /mnt/borg`. |
-| Mount point not empty | Existing files at `MOUNT_PATH` | Use an empty directory. |
+| `borg: Unrecognized command mount` / `fuse is not installed` | Binding FUSE mancanti | `pip install 'borgbackup[fuse]'` oppure installa il pacchetto `borgbackup-fuse` / `python3-llfuse` della tua distro. |
+| `fusermount: failed to open /dev/fuse: Permission denied` | Utente non autorizzato a usare FUSE | Esegui come root o aggiungi l'utente al gruppo `fuse`. |
+| `Cannot create mountpoint: ...` | Padre non scrivibile | Scegli un percorso scrivibile o esegui come root. |
+| `Device or resource busy` allo smontaggio | Una shell o un processo è dentro il mount | Esci con `cd`, poi `fuser -mv /mnt/borg`. |
+| Punto di mount non vuoto | File esistenti in `MOUNT_PATH` | Usa una directory vuota. |
 
-Mounting a **remote** repository works but every read is a network round trip.
-For bulk restores, `extract` is far faster.
+Montare un repository **remoto** funziona ma ogni lettura è un round trip di
+rete. Per ripristini di massa, `extract` è molto più veloce.
 
 ### check
 
-Verifies repository consistency, or the integrity of one archive.
+Verifica la coerenza del repository, oppure l'integrità di un archivio.
 
-Runs:
+Esegue:
 
-- without `--archive`: `borg check --repository-only`
-- with `--archive`: `borg check ::ARCHIVE_NAME`
+- senza `--archive`: `borg check --repository-only`
+- con `--archive`: `borg check ::ARCHIVE_NAME`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`. **Optional:** `ARCHIVE_NAME`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`. **Opzionale:** `ARCHIVE_NAME`.
 
-The default is deliberately the **fast** check. `--repository-only` verifies
-segment files and the index without reading and decrypting archive data, so a
-routine `tngbackup check` is cheap enough to schedule weekly. Naming an archive
-switches to a full consistency check of that archive's chunks.
+Il default è deliberatamente il check **veloce**. `--repository-only` verifica
+i file di segmento e l'indice senza leggere e decifrare i dati degli archivi,
+quindi un `tngbackup check` di routine è abbastanza economico da poter essere
+pianificato settimanalmente. Nominare un archivio passa invece a un check di
+coerenza completo dei chunk di quell'archivio.
 
 ```bash
 # Fast repository-only check
@@ -956,7 +998,7 @@ tngbackup check --config /etc/tngbackup.conf
 tngbackup check --config /etc/tngbackup.conf --archive archive-20260905-030001
 ```
 
-Sample output of a clean repository check:
+Esempio di output di un check pulito del repository:
 
 ```
 [2026-09-05 04:00:01] [INFO] Checking repository: /mnt/backup/borg-repo
@@ -966,40 +1008,42 @@ Completed repository check, no problems found.
 [2026-09-05 04:01:38] [INFO] check completed successfully
 ```
 
-The audit record's details field is `repository` for a repository check, or the
-archive name for an archive check.
+Il campo dei dettagli del record di audit è `repository` per un check del
+repository, oppure il nome dell'archivio per un check di archivio.
 
-Practical guidance:
+Indicazioni pratiche:
 
-- A **full** archive check reads every chunk. Checking each archive in turn is
-  a whole-repository read and can take hours; do it occasionally, not nightly.
-- To verify archive data periodically without checking everything, check the
-  newest archive by name each week and rotate through older ones.
-- Never run `borg check --repair` casually. It can discard data to make the
-  repository self-consistent. Take a copy of the repository first if the data
-  matters. TNGBackup never passes `--repair`.
-- For remote repositories, running `borg check` **on the server** avoids
-  transferring the whole repository over the network.
+- Un check **completo** di un archivio legge ogni chunk. Verificare ogni
+  archivio a turno equivale a una lettura dell'intero repository e può
+  richiedere ore; fallo occasionalmente, non ogni notte.
+- Per verificare i dati degli archivi periodicamente senza controllare tutto,
+  controlla ogni settimana l'archivio più recente per nome e ruota tra
+  archivi più vecchi.
+- Non eseguire mai casualmente `borg check --repair`. Può scartare dati per
+  rendere il repository auto-coerente. Fai prima una copia del repository se
+  i dati contano. TNGBackup non passa mai `--repair`.
+- Per repository remoti, eseguire `borg check` **sul server** evita di
+  trasferire l'intero repository via rete.
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `Data integrity error` | Bit rot or truncated file | Check the underlying storage/SMART first, then consider `--repair` on a copy. |
-| Check appears to hang | Full archive read in progress | Expected for an archive check; watch I/O with `iostat`. |
+| `Data integrity error` | Bit rot o file troncato | Controlla prima lo storage sottostante/SMART, poi valuta `--repair` su una copia. |
+| Il check sembra bloccato | Lettura completa dell'archivio in corso | Atteso per un check di archivio; monitora l'I/O con `iostat`. |
 
 ### prune
 
-Deletes archives that no retention rule requires, using the `KEEP_*`
-variables. Pruning marks data as unused; it does **not** free disk space until
-`compact` runs.
+Elimina gli archivi che nessuna regola di retention richiede, usando le
+variabili `KEEP_*`. La potatura (pruning) contrassegna i dati come inutilizzati;
+**non** libera spazio su disco finché non viene eseguito `compact`.
 
-Runs: `borg prune --list --keep-last=N --keep-daily=N ...`
+Esegue: `borg prune --list --keep-last=N --keep-daily=N ...`
 
-Only rules whose value is non-empty and not `"0"` contribute an option.
-`--list` is always passed, so the log shows exactly which archives were kept
-and which were pruned.
+Solo le regole il cui valore è non vuoto e diverso da `"0"` contribuiscono
+un'opzione. `--list` viene sempre passato, così il log mostra esattamente
+quali archivi sono stati mantenuti e quali potati.
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`, and at least one active `KEEP_*`
-rule.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`, e almeno una regola `KEEP_*`
+attiva.
 
 ```bash
 tngbackup prune --config /etc/tngbackup.conf
@@ -1009,7 +1053,7 @@ tngbackup prune --config /etc/tngbackup.conf --audit-log /var/log/tngbackup-audi
 DRYRUN=y DEBUG=y tngbackup prune --config /etc/tngbackup.conf
 ```
 
-Sample output:
+Esempio di output:
 
 ```
 [2026-09-05 04:30:00] [INFO] Pruning repository: /mnt/backup/borg-repo
@@ -1019,31 +1063,33 @@ Pruning archive archive-20260820-030001 Wed, 2026-08-20 03:00:01
 [2026-09-05 04:30:12] [INFO] prune completed successfully
 ```
 
-The audit record's details field lists the retention options that were applied,
-so the audit log records the policy in force at the time of each prune.
+Il campo dei dettagli del record di audit elenca le opzioni di retention che
+sono state applicate, così l'audit log registra la politica in vigore al
+momento di ogni prune.
 
-**There is no way to make this prune everything.** If every `KEEP_*` variable
-is empty or `0`, `build_retention_opts` yields nothing and the operation
-refuses to run:
+**Non c'è modo di far potare tutto.** Se ogni variabile `KEEP_*` è vuota o
+`0`, `build_retention_opts` non produce nulla e l'operazione rifiuta di
+essere eseguita:
 
 ```
 [ERROR] No retention policy configured (set at least one of KEEP_LAST, KEEP_HOURLY, KEEP_DAILY, KEEP_WEEKLY, KEEP_MONTHLY, KEEP_YEARLY)
 ```
 
-That is recorded as a `FAILED` prune in the audit log and exits 1.
+Questo viene registrato come un prune `FAILED` nell'audit log ed esce con 1.
 
-The corollary matters more: **`KEEP_LAST` defaults to 10, and `KEEP_DAILY`,
-`KEEP_WEEKLY` and `KEEP_MONTHLY` default to 7, 4 and 12.** A config file that
-says nothing about retention still has a policy, and running `prune` against it
-will delete archives that fall outside it. Before the first prune on any
-repository, confirm the effective policy:
+Il corollario conta di più: **`KEEP_LAST` ha default 10, e `KEEP_DAILY`,
+`KEEP_WEEKLY` e `KEEP_MONTHLY` hanno default rispettivamente 7, 4 e 12.** Un
+file di configurazione che non dice nulla sulla retention ha comunque una
+politica, ed eseguire `prune` contro di esso eliminerà gli archivi che ne
+restano fuori. Prima del primo prune su qualunque repository, conferma la
+politica effettiva:
 
 ```bash
 DEBUG=y DRYRUN=y tngbackup prune --config /etc/tngbackup.conf
 # [DEBUG] Retention policy: --keep-last=10 --keep-daily=7 --keep-weekly=4 --keep-monthly=12
 ```
 
-and dry-run it against the real archive list with Borg:
+e fai un dry-run contro l'elenco reale degli archivi con Borg:
 
 ```bash
 export BORG_PASSPHRASE='...'
@@ -1051,59 +1097,62 @@ borg prune --list --dry-run --keep-last=10 --keep-daily=7 --keep-weekly=4 \
     --keep-monthly=12 /mnt/backup/borg-repo
 ```
 
-Other cautions:
+Altre precauzioni:
 
-- If a repository holds archives from several different jobs, restrict pruning
-  with `--glob-archives`/`--prefix` (Borg 1.2/1.3 respectively), or give each
-  job its own repository. Batch mode gives each config its own `REPO_URI`,
-  which is the clean approach.
-- Prune uses archive **timestamps**, not names.
-- In batch mode the `KEEP_*` variables are **not** reset between config files,
-  so set all six explicitly in every batch config.
+- Se un repository contiene archivi provenienti da più job diversi,
+  restringi la potatura con `--glob-archives`/`--prefix` (rispettivamente
+  Borg 1.2/1.3), oppure assegna a ogni job il proprio repository. La modalità
+  batch dà a ogni configurazione il proprio `REPO_URI`, che è l'approccio
+  pulito.
+- Prune usa i **timestamp** degli archivi, non i nomi.
+- In modalità batch le variabili `KEEP_*` **non** vengono resettate tra i
+  file di configurazione, quindi imposta tutte e sei esplicitamente in ogni
+  configurazione batch.
 
 ### compact
 
-Rewrites repository segments to physically release the space freed by `prune`
-and `delete`.
+Riscrive i segmenti del repository per rilasciare fisicamente lo spazio
+liberato da `prune` e `delete`.
 
-Runs: `borg compact`
+Esegue: `borg compact`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`.
 
 ```bash
 tngbackup compact --config /etc/tngbackup.conf
 ```
 
-Notes:
+Note:
 
-- `compact` exists in Borg 1.2+. On Borg 1.1 the equivalent happened
-  automatically during `prune`.
-- It is I/O heavy and rewrites segment files. Run it after pruning, not before,
-  and not on every backup - daily or weekly is plenty.
-- Free space is only reclaimed after compaction. If `df` shows no change after
-  a prune, this is why.
-- On an append-only remote, run compaction on the server side.
+- `compact` esiste da Borg 1.2+. Su Borg 1.1 l'equivalente avveniva
+  automaticamente durante `prune`.
+- È pesante in termini di I/O e riscrive i file di segmento. Eseguilo dopo
+  la potatura, non prima, e non a ogni backup - giornaliero o settimanale
+  è più che sufficiente.
+- Lo spazio viene liberato solo dopo la compattazione. Se `df` non mostra
+  cambiamenti dopo un prune, il motivo è questo.
+- Su un remoto append-only, esegui la compattazione lato server.
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `Unrecognized command compact` | Borg 1.1 or older | Upgrade to Borg 1.2+; pruning already compacts on 1.1. |
-| `Failed to create/acquire the lock` | Another operation running | Wait, or clear a stale lock (see Troubleshooting). |
+| `Unrecognized command compact` | Borg 1.1 o precedente | Aggiorna a Borg 1.2+; la potatura già compatta sulla 1.1. |
+| `Failed to create/acquire the lock` | Un'altra operazione è in esecuzione | Attendi, oppure rimuovi un lock residuo (vedi Risoluzione dei problemi). |
 
 ### info
 
-Shows repository statistics, or statistics for one archive when `--archive` is
-given.
+Mostra le statistiche del repository, oppure le statistiche di un archivio
+quando viene dato `--archive`.
 
-Runs: `borg info` or `borg info ::ARCHIVE_NAME`.
+Esegue: `borg info` oppure `borg info ::ARCHIVE_NAME`.
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`. **Optional:** `ARCHIVE_NAME`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`. **Opzionale:** `ARCHIVE_NAME`.
 
 ```bash
 tngbackup info --config /etc/tngbackup.conf
 tngbackup info --config /etc/tngbackup.conf --archive archive-20260905-030001
 ```
 
-Sample repository output:
+Esempio di output del repository:
 
 ```
 Repository ID: 9f3c2b1a4d5e6f7a8b9c0d1e2f3a4b5c...
@@ -1116,26 +1165,27 @@ Unique chunks         Total chunks
        412093             8823910
 ```
 
-Read "Deduplicated size" as the actual space the repository occupies. The gap
-between it and "Original size" is the deduplication and compression benefit.
+Leggi "Deduplicated size" come lo spazio effettivo occupato dal repository.
+Il divario tra questo valore e "Original size" è il beneficio di
+deduplicazione e compressione.
 
 ### delete
 
-Deletes one named archive.
+Elimina un archivio nominato.
 
-Runs: `borg delete ::ARCHIVE_NAME`
+Esegue: `borg delete ::ARCHIVE_NAME`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`, `ARCHIVE_NAME`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`, `ARCHIVE_NAME`.
 
-`--archive` is mandatory. Without it the operation fails immediately and
-cleanly, before contacting the repository:
+`--archive` è obbligatorio. Senza di esso l'operazione fallisce
+immediatamente e in modo pulito, prima di contattare il repository:
 
 ```
 [ERROR] delete requires --archive NAME
 ```
 
-This is a deliberate guard: a bare `borg delete` would target the whole
-repository, and the wrapper never issues one.
+Questa è una protezione deliberata: un `borg delete` nudo avrebbe come
+bersaglio l'intero repository, e il wrapper non ne emette mai uno.
 
 ```bash
 tngbackup delete --config /etc/tngbackup.conf --archive archive-20260820-030001
@@ -1144,33 +1194,34 @@ tngbackup delete --config /etc/tngbackup.conf --archive archive-20260820-030001
 DRYRUN=y tngbackup delete --config /etc/tngbackup.conf --archive archive-20260820-030001
 ```
 
-Warnings:
+Avvertenze:
 
-- Destructive and not undoable.
-- Space is released only after `compact`.
-- For routine cleanup, use `prune` with a retention policy rather than manual
-  `delete`.
+- Distruttiva e non annullabile.
+- Lo spazio viene rilasciato solo dopo `compact`.
+- Per la pulizia di routine, usa `prune` con una politica di retention
+  invece di `delete` manuale.
 
 ### extract
 
-Restores the contents of an archive into a directory.
+Ripristina il contenuto di un archivio in una directory.
 
-Runs, from inside the target directory: `borg extract ::ARCHIVE_NAME`
+Esegue, dall'interno della directory di destinazione: `borg extract ::ARCHIVE_NAME`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`, `ARCHIVE_NAME`.
-**Optional:** `RESTORE_PATH` / `--path`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`, `ARCHIVE_NAME`.
+**Opzionale:** `RESTORE_PATH` / `--path`.
 
-`--archive` is mandatory:
+`--archive` è obbligatorio:
 
 ```
 [ERROR] extract requires --archive NAME
 ```
 
-The destination is `RESTORE_PATH` (or `--path`), falling back to the **current
-working directory** when neither is set - so always pass one explicitly in
-automation. The directory is created if it does not exist (skipped under
-`DRYRUN=y`), and the extraction runs in a subshell that `cd`s into it, so the
-caller's working directory is unaffected.
+La destinazione è `RESTORE_PATH` (o `--path`), che ricade sulla **directory
+di lavoro corrente** quando nessuna delle due è impostata - quindi passane
+sempre una esplicitamente in automazione. La directory viene creata se non
+esiste (saltato sotto `DRYRUN=y`), e l'estrazione viene eseguita in una
+subshell che vi entra con `cd`, così la directory di lavoro del chiamante
+non viene toccata.
 
 ```bash
 tngbackup extract --config /etc/tngbackup.conf \
@@ -1178,7 +1229,7 @@ tngbackup extract --config /etc/tngbackup.conf \
                   --path /tmp/restore
 ```
 
-Sample output:
+Esempio di output:
 
 ```
 [2026-09-05 11:03:20] [INFO] Extracting archive archive-20260905-030001 into /tmp/restore
@@ -1186,17 +1237,18 @@ Sample output:
 [2026-09-05 11:06:02] [INFO] Operation 'extract' finished with status SUCCESS in 162s
 ```
 
-Remember: with `extract`, `--path` is the **destination**, not a selector for
-what to restore.
+Ricorda: con `extract`, `--path` è la **destinazione**, non un selettore di
+cosa ripristinare.
 
-Borg restores paths as they were stored, relative to the extraction directory.
-An archive of `/etc` extracted into `/tmp/restore` produces `/tmp/restore/etc/...`.
-Always extract into a scratch directory first, inspect the result, then move
-files into place. Extracting directly over a live filesystem risks overwriting
-good data with old data.
+Borg ripristina i percorsi così come sono stati archiviati, relativi alla
+directory di estrazione. Un archivio di `/etc` estratto in `/tmp/restore`
+produce `/tmp/restore/etc/...`. Estrai sempre prima in una directory di
+prova, ispeziona il risultato, poi sposta i file al loro posto. Estrarre
+direttamente sopra un filesystem in produzione rischia di sovrascrivere dati
+buoni con dati vecchi.
 
-To restore a single file or subtree, use Borg directly - path selectors are not
-exposed by the wrapper:
+Per ripristinare un singolo file o un sottoalbero, usa Borg direttamente - i
+selettori di percorso non sono esposti dal wrapper:
 
 ```bash
 export BORG_PASSPHRASE='...'
@@ -1204,55 +1256,63 @@ cd /tmp/restore
 borg extract /mnt/backup/borg-repo::archive-20260905-030001 etc/nginx/nginx.conf
 ```
 
-Preview without writing anything:
+Anteprima senza scrivere nulla:
 
 ```bash
 borg extract --dry-run --list /mnt/backup/borg-repo::archive-20260905-030001
 ```
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `extract requires --archive NAME` | No archive given | Pass `--archive`; find names with `tngbackup list`. |
-| `Cannot create restore path: ...` | Parent not writable | Choose a writable destination or run as root. |
-| `Permission denied` while writing | Restore dir not writable | Fix ownership, or run as root to preserve owners/modes. |
-| Files land in an unexpected place | Archive paths are relative | Look one level deeper: `find /tmp/restore -maxdepth 2`. |
-| `No space left on device` | Restore target too small | Restore selectively, or to a bigger filesystem. |
+| `extract requires --archive NAME` | Nessun archivio dato | Passa `--archive`; trova i nomi con `tngbackup list`. |
+| `Cannot create restore path: ...` | Padre non scrivibile | Scegli una destinazione scrivibile o esegui come root. |
+| `Permission denied` durante la scrittura | Directory di ripristino non scrivibile | Correggi la proprietà, oppure esegui come root per preservare proprietari/modalità. |
+| I file finiscono in un posto inatteso | I percorsi dell'archivio sono relativi | Guarda un livello più in profondità: `find /tmp/restore -maxdepth 2`. |
+| `No space left on device` | Destinazione del ripristino troppo piccola | Ripristina selettivamente, oppure su un filesystem più grande. |
 
 ### break-lock
 
-Removes a stale repository lock that prevents backup operations.
+Rimuove un lock residuo del repository che impedisce le operazioni di backup.
 
-Runs: `borg break-lock $REPO_URI`
+Esegue: `borg break-lock $REPO_URI`
 
-**Required:** `REPO_URI`, `REPO_PASSPHRASE`.
+**Richiesta:** `REPO_URI`, `REPO_PASSPHRASE`.
 
-When a backup crashes or is interrupted without cleaning up, Borg leaves the repository locked. Subsequent backup attempts fail with "Failed to create/acquire the lock (timeout)". Use `break-lock` to remove the stale lock:
+Quando un backup va in crash o viene interrotto senza fare pulizia, Borg
+lascia il repository bloccato. I tentativi di backup successivi falliscono
+con "Failed to create/acquire the lock (timeout)". Usa `break-lock` per
+rimuovere il lock residuo:
 
 ```bash
 tngbackup break-lock --config /etc/tngbackup.conf
 ```
 
-**Troubleshooting:**
+**Risoluzione dei problemi:**
 
-| Message | Cause | Fix |
+| Messaggio | Causa | Soluzione |
 |---|---|---|
-| `Repository ... does not exist` | Wrong `REPO_URI` | Verify path/URI. |
-| `passphrase supplied ... is incorrect` | Wrong `REPO_PASSPHRASE` | Fix the config. |
-| Lock successfully removed | Operation succeeded | Retry your backup operation. |
+| `Repository ... does not exist` | `REPO_URI` errato | Verifica il percorso/URI. |
+| `passphrase supplied ... is incorrect` | `REPO_PASSPHRASE` errata | Correggi la configurazione. |
+| Lock rimosso con successo | Operazione riuscita | Riprova la tua operazione di backup. |
 
-**Note:** This operation is for troubleshooting only. Normal backup operations should not require manual lock removal. If you frequently encounter stale locks:
-- Consider using `PRERUN="borg break-lock 2>/dev/null || true"` to auto-clean before each backup
-- Investigate why backups are crashing (disk space, permissions, network issues)
+**Nota:** Questa operazione serve solo per la risoluzione dei problemi. Le
+normali operazioni di backup non dovrebbero richiedere una rimozione manuale
+del lock. Se incontri frequentemente lock residui:
+- Valuta di usare `PRERUN="borg break-lock 2>/dev/null || true"` per pulire
+  automaticamente prima di ogni backup
+- Indaga perché i backup vanno in crash (spazio su disco, permessi, problemi
+  di rete)
+
 
 ---
 
-## Interactive menu
+## Menu interattivo
 
-Running `tngbackup` with no operation (and no `--help`) shows a menu:
+Eseguire `tngbackup` senza alcuna operazione (e senza `--help`) mostra un menu:
 
 ```
 ╔═══════════════════════════════════╗
-║      TNGBackup v2.0.8             ║
+║      TNGBackup v2.0.9             ║
 ╚═══════════════════════════════════╝
 
   1) Initialize repository
@@ -1271,13 +1331,13 @@ Running `tngbackup` with no operation (and no `--help`) shows a menu:
 Select [0-10]:
 ```
 
-Pressing Enter with no input selects `0` and exits. An invalid entry redisplays
-the menu.
+Premere Invio senza alcun input seleziona `0` ed esce. Un inserimento non
+valido ripresenta il menu.
 
-The menu runs **before** the configuration is loaded and simply sets
-`OPERATION`; the script then continues normally in the same process. Every
-other option you passed survives, so combining the menu with flags works as
-expected:
+Il menu viene eseguito **prima** che la configurazione venga caricata e si
+limita a impostare `OPERATION`; lo script poi continua normalmente nello
+stesso processo. Ogni altra opzione che hai passato sopravvive, quindi
+combinare il menu con dei flag funziona come atteso:
 
 ```bash
 tngbackup --config /etc/tngbackup/webserver.conf \
@@ -1286,55 +1346,61 @@ tngbackup --config /etc/tngbackup/webserver.conf \
 # → pick 3 (List archives): lists that archive, from that config, into that log
 ```
 
-The same applies to batch mode: choosing an operation from the menu and passing
-a config **directory** runs that operation across every config in it.
+Lo stesso vale per la modalità batch: scegliere un'operazione dal menu e
+passare una **directory** di configurazione esegue quell'operazione su ogni
+configurazione al suo interno.
 
-The menu reads from standard input, so it must never be used from cron, a
-systemd unit, or any other non-interactive context. Always name an operation
-explicitly there.
+Il menu legge dallo standard input, quindi non deve mai essere usato da cron,
+da una unit systemd, o da qualunque altro contesto non interattivo. Nomina
+sempre esplicitamente un'operazione lì.
 
 ---
 
-## Retention policy
+## Politica di retention
 
-The `KEEP_*` variables map one-to-one onto Borg's `--keep-*` prune options.
-Borg's algorithm is:
+Le variabili `KEEP_*` si mappano uno a uno sulle opzioni `--keep-*` di prune
+di Borg. L'algoritmo di Borg è:
 
-1. Sort archives newest to oldest.
-2. For each rule in turn, walk the archives and keep the **newest archive in
-   each time bucket** (hour, day, week, month, year) until N buckets have been
-   kept.
-3. Keep the union of all rules' selections. Delete everything else.
+1. Ordina gli archivi dal più recente al più vecchio.
+2. Per ogni regola a turno, percorri gli archivi e mantieni l'**archivio più
+   recente in ciascun bucket temporale** (ora, giorno, settimana, mese, anno)
+   finché non sono stati mantenuti N bucket.
+3. Mantieni l'unione delle selezioni di tutte le regole. Elimina tutto il
+   resto.
 
-Two consequences that surprise people:
+Due conseguenze che sorprendono le persone:
 
-- Rules are **not** additive quotas on a single list. `KEEP_DAILY=7` plus
-  `KEEP_WEEKLY=4` does not keep 11 archives; the weekly rule usually re-selects
-  archives the daily rule already kept, so the real total is smaller.
-- A rule "keeps the last N periods that contain an archive", not "the last N
-  calendar periods". If the machine was off for a month, the monthly rule
-  reaches further back rather than losing a slot.
+- Le regole **non** sono quote additive su un'unica lista. `KEEP_DAILY=7`
+  più `KEEP_WEEKLY=4` non mantiene 11 archivi; la regola settimanale di
+  solito riseleziona archivi già mantenuti dalla regola giornaliera, quindi
+  il totale reale è più piccolo.
+- Una regola "mantiene gli ultimi N periodi che contengono un archivio", non
+  "gli ultimi N periodi di calendario". Se la macchina è rimasta spenta per
+  un mese, la regola mensile va a cercare più indietro invece di perdere uno
+  slot.
 
-### The defaults
+### I default
 
-Unlike most settings, retention is **not** empty by default:
+A differenza della maggior parte delle impostazioni, la retention **non** è
+vuota per default:
 
 ```
 KEEP_LAST=10   KEEP_HOURLY=(none)   KEEP_DAILY=7
 KEEP_WEEKLY=4  KEEP_MONTHLY=12      KEEP_YEARLY=(none)
 ```
 
-so a config that never mentions retention still prunes with
-`--keep-last=10 --keep-daily=7 --keep-weekly=4 --keep-monthly=12`: roughly
-20 archives spanning about a year. That is a sane default, but it is a real
-policy that will delete archives, so decide consciously rather than inheriting
-it by accident. Set the variables explicitly in every config file you write.
+quindi una configurazione che non menziona mai la retention pota comunque con
+`--keep-last=10 --keep-daily=7 --keep-weekly=4 --keep-monthly=12`: circa
+20 archivi che coprono all'incirca un anno. È un default ragionevole, ma è
+una politica reale che eliminerà archivi, quindi decidi consapevolmente
+invece di ereditarla per caso. Imposta le variabili esplicitamente in ogni
+file di configurazione che scrivi.
 
-To disable a single rule, set it to `0` or `""`. Setting **all six** to `0`
-does not prune everything - it makes `prune` refuse to run and report a
-failure.
+Per disabilitare una singola regola, impostala a `0` o `""`. Impostare
+**tutte e sei** a `0` non pota tutto - fa sì che `prune` rifiuti di essere
+eseguito e segnali un fallimento.
 
-### Worked example 1 - daily server, three-month history
+### Esempio pratico 1 - server giornaliero, storico di tre mesi
 
 ```bash
 KEEP_LAST="3"
@@ -1345,20 +1411,21 @@ KEEP_MONTHLY="3"
 KEEP_YEARLY=""
 ```
 
-One backup per night. After a year of running, the repository holds roughly:
+Un backup a notte. Dopo un anno di esecuzione, il repository contiene
+all'incirca:
 
-| Rule | Keeps | Approximate archives |
+| Regola | Mantiene | Archivi approssimativi |
 |---|---|---|
-| `KEEP_LAST=3` | 3 newest, unconditionally | 3 (all overlap the daily set) |
-| `KEEP_DAILY=7` | newest archive of each of the last 7 days | 7 |
-| `KEEP_WEEKLY=4` | newest of each of the last 4 weeks | ~3 new (1 overlaps the daily set) |
-| `KEEP_MONTHLY=3` | newest of each of the last 3 months | ~2 new (1 overlaps the weekly set) |
+| `KEEP_LAST=3` | i 3 più recenti, incondizionatamente | 3 (tutti si sovrappongono all'insieme giornaliero) |
+| `KEEP_DAILY=7` | l'archivio più recente per ciascuno degli ultimi 7 giorni | 7 |
+| `KEEP_WEEKLY=4` | il più recente per ciascuna delle ultime 4 settimane | ~3 nuovi (1 si sovrappone all'insieme giornaliero) |
+| `KEEP_MONTHLY=3` | il più recente per ciascuno degli ultimi 3 mesi | ~2 nuovi (1 si sovrappone all'insieme settimanale) |
 
-Total: about 12 archives, spanning roughly 90 days. Recovery granularity is one
-day for the last week, one week for the last month, one month for the last
-quarter.
+Totale: circa 12 archivi, che coprono all'incirca 90 giorni. La granularità
+di recupero è di un giorno per l'ultima settimana, una settimana per l'ultimo
+mese, un mese per l'ultimo trimestre.
 
-### Worked example 2 - hourly backups of a busy database
+### Esempio pratico 2 - backup orari di un database molto attivo
 
 ```bash
 KEEP_LAST="2"
@@ -1369,11 +1436,12 @@ KEEP_MONTHLY=""
 KEEP_YEARLY=""
 ```
 
-One backup per hour. Kept: 24 hourly points covering the last day, then daily
-points for a week, then weekly points for a month - about 32 archives. This is
-the right shape for data where a mistake is usually noticed within hours.
+Un backup all'ora. Mantenuti: 24 punti orari che coprono l'ultimo giorno,
+poi punti giornalieri per una settimana, poi punti settimanali per un mese -
+circa 32 archivi. È la forma giusta per dati in cui un errore viene
+solitamente notato entro poche ore.
 
-### Worked example 3 - long legal retention
+### Esempio pratico 3 - retention legale a lungo termine
 
 ```bash
 KEEP_LAST="5"
@@ -1384,25 +1452,28 @@ KEEP_MONTHLY="24"
 KEEP_YEARLY="7"
 ```
 
-About 45 archives spanning seven years. Deduplication makes this far cheaper
-than it sounds when the data changes slowly, but it also means the repository
-never stops growing; check `info` output periodically.
+Circa 45 archivi che coprono sette anni. La deduplicazione rende questo
+molto più economico di quanto sembri quando i dati cambiano lentamente, ma
+significa anche che il repository non smette mai di crescere; controlla
+periodicamente l'output di `info`.
 
 ### `KEEP_LAST`
 
-`KEEP_LAST=N` keeps the N newest archives irrespective of time. Use it as a
-safety floor combined with time-based rules: the union always contains at least
-the N most recent archives, even if the time-based rules would select fewer.
+`KEEP_LAST=N` mantiene gli N archivi più recenti indipendentemente dal
+tempo. Usalo come rete di sicurezza combinata con le regole basate sul
+tempo: l'unione contiene sempre almeno gli N archivi più recenti, anche se
+le regole basate sul tempo ne selezionassero di meno.
 
-### Validating a policy
+### Validare una politica
 
-Two steps, in order. First confirm what the script will pass:
+Due passi, in ordine. Prima conferma cosa passerà lo script:
 
 ```bash
 DEBUG=y DRYRUN=y tngbackup prune --config /etc/tngbackup.conf
 ```
 
-Then confirm what Borg would do with it, against the real archive list:
+Poi conferma cosa farebbe Borg con essa, contro l'elenco reale degli
+archivi:
 
 ```bash
 export BORG_PASSPHRASE='...'
@@ -1411,7 +1482,7 @@ borg prune --list --dry-run \
     /mnt/backup/borg-repo
 ```
 
-Output marks each archive `Keep` or `Would prune`:
+L'output contrassegna ogni archivio come `Keep` o `Would prune`:
 
 ```
 Keep         archive-20260905-030001   Fri, 2026-09-05 03:00:01
@@ -1419,54 +1490,62 @@ Keep         archive-20260904-030001   Thu, 2026-09-04 03:00:01
 Would prune  archive-20260820-030001   Wed, 2026-08-20 03:00:01
 ```
 
-Then remember that pruning frees nothing until `compact` runs.
+Poi ricorda che la potatura non libera nulla finché non gira `compact`.
 
 ---
 
-## Batch mode
+## Modalità batch
 
-Passing a **directory** to `--config` (or setting `TNGB_CONFIG` to a directory)
-switches TNGBackup into batch mode. Every `*.conf` file directly inside the
-directory is processed in turn, in shell glob order (effectively alphabetical).
+Passare una **directory** a `--config` (o impostare `TNGB_CONFIG` a una
+directory) fa passare TNGBackup in modalità batch. Ogni file `*.conf`
+direttamente dentro la directory viene elaborato a turno, nell'ordine dei
+glob della shell (di fatto alfabetico).
 
-For each file the script:
+Per ogni file lo script:
 
-1. Logs `Processing: <file>`.
-2. Resets `REPO_URI`, `REPO_PASSPHRASE`, `BACKUP_PATH`, `BACKUP_EXCLUDE` and
-   `ARCHIVE_NAME` to empty, so one config cannot silently inherit another's
-   repository, credentials, sources, exclusions or archive name.
-3. Sources the config file. A file that fails to source is logged as a warning
-   and skipped; the batch continues.
-4. Validates the configuration. A failed validation is counted as a failure and
-   the file is skipped.
-5. Runs the requested operation through the same `dispatch_operation` function
-   used by single-config runs.
+1. Logga `Processing: <file>`.
+2. Resetta `REPO_URI`, `REPO_PASSPHRASE`, `BACKUP_PATH`, `BACKUP_EXCLUDE` e
+   `ARCHIVE_NAME` a vuoto, così una configurazione non può ereditare
+   silenziosamente il repository, le credenziali, le sorgenti, le esclusioni
+   o il nome dell'archivio di un'altra.
+3. Esegue il source del file di configurazione. Un file che fallisce il
+   sourcing viene registrato come warning e saltato; il batch continua.
+4. Valida la configurazione. Una validazione fallita viene conteggiata come
+   fallimento e il file viene saltato.
+5. Esegue l'operazione richiesta attraverso la stessa funzione
+   `dispatch_operation` usata dalle esecuzioni a configurazione singola.
 
-Batch mode supports **all ten operations** - whatever operation you name (or
-choose from the menu) is applied to every config in the directory. `backup`,
-`check` and `prune` are the ones that make sense unattended; `mount` across a
-whole directory is rarely what you want.
+La modalità batch supporta **tutte e dieci le operazioni** - qualunque
+operazione tu nomini (o scelga dal menu) viene applicata a ogni
+configurazione nella directory. `backup`, `check` e `prune` sono quelle che
+hanno senso senza presidio; `mount` su un'intera directory è raramente ciò
+che vuoi.
 
-Failures are counted, not ignored: the batch runs to completion, and the script
-**exits non-zero if any config failed**. A config whose operation finished with
-a Borg *warning* is not counted as a failure - it produced its result - but it
-is still recorded distinctly as `WARNING` in the audit log.
+I fallimenti vengono conteggiati, non ignorati: il batch viene eseguito fino
+al completamento, e lo script **esce con codice diverso da zero se una
+qualunque configurazione è fallita**. Una configurazione la cui operazione è
+terminata con un *warning* di Borg non viene conteggiata come fallimento - ha
+comunque prodotto il suo risultato - ma viene comunque registrata
+distintamente come `WARNING` nell'audit log.
 
-**What still carries over between files:** `BORG_OPT`, all six `KEEP_*`
-variables, `RESTORE_PATH`, `MOUNT_PATH`, `SSH_OPT`, `SSH_PORT`,
-`BORG_ENCRYPTION`, `LOG_FILE`, `AUDIT_LOG_FILE`, `DEBUG`, `DRYRUN` and
-`SHOWTEXT` are **not** reset. Write batch configs defensively: set every
-variable you care about explicitly in every file, including empty ones. The
-example batch configs in `docs/examples/batch-configs/` follow this rule, and
-the retention variables are the ones that matter most - a `prune` run inheriting
-the previous config's `KEEP_YEARLY` is a silent data-retention bug.
+**Cosa continua a passare tra i file:** `BORG_OPT`, tutte e sei le
+variabili `KEEP_*`, `RESTORE_PATH`, `MOUNT_PATH`, `SSH_OPT`, `SSH_PORT`,
+`BORG_ENCRYPTION`, `LOG_FILE`, `AUDIT_LOG_FILE`, `DEBUG`, `DRYRUN` e
+`SHOWTEXT` **non** vengono resettate. Scrivi le configurazioni batch in modo
+difensivo: imposta esplicitamente in ogni file ogni variabile che ti
+interessa, incluse quelle vuote. Le configurazioni batch di esempio in
+`docs/examples/batch-configs/` seguono questa regola, e le variabili di
+retention sono quelle che contano di più - un `prune` che eredita
+`KEEP_YEARLY` dalla configurazione precedente è un bug silenzioso di
+retention dei dati.
 
-`--repo` and `--passphrase` are ignored in batch mode: the loop resets both
-before sourcing each file. Each config carries its own.
+`--repo` e `--passphrase` vengono ignorati in modalità batch: il ciclo
+resetta entrambi prima di eseguire il source di ogni file. Ogni
+configurazione porta la propria.
 
-### Worked example
+### Esempio pratico
 
-Layout:
+Struttura:
 
 ```
 /etc/tngbackup/            (mode 0700, root:root)
@@ -1475,7 +1554,7 @@ Layout:
 └── webserver.conf         (mode 0600)
 ```
 
-Each file targets its own repository:
+Ogni file punta al proprio repository:
 
 ```bash
 # webserver.conf
@@ -1491,13 +1570,13 @@ REPO_URI="/mnt/backup/borg/home"
 BACKUP_PATH="/home"
 ```
 
-Validate the whole directory without writing anything:
+Convalida l'intera directory senza scrivere nulla:
 
 ```bash
 DRYRUN=y tngbackup backup --config /etc/tngbackup/
 ```
 
-Then run it for real:
+Poi eseguilo per davvero:
 
 ```bash
 tngbackup backup --config /etc/tngbackup/ \
@@ -1521,50 +1600,53 @@ Output:
 [2026-09-05 03:14:30] [INFO] Batch run completed in 869s
 ```
 
-With one failure the tail reads:
+Con un fallimento la parte finale recita:
 
 ```
 [2026-09-05 03:09:55] [WARN] Operation 'backup' failed for: /etc/tngbackup/webserver.conf
 [2026-09-05 03:14:30] [INFO] Batch processing complete: 3 config(s) processed, 1 failed
 ```
 
-and the process exits 1.
+e il processo esce con 1.
 
-Then prune all three with the same command shape:
+Poi pota tutte e tre con la stessa forma di comando:
 
 ```bash
 tngbackup prune --config /etc/tngbackup/ --audit-log /var/log/tngbackup-audit.log
 ```
 
-Batch behaviour worth knowing:
+Comportamento del batch degno di nota:
 
-- Jobs run **sequentially**, never in parallel. Total wall time is the sum.
-- One failing job does not abort the batch, but it does change the exit
-  status - so `systemd` and `cron` will report the failure normally.
-- Ordering is alphabetical, so prefix filenames if order matters:
-  `10-database.conf`, `20-webserver.conf`, `50-home.conf`.
-- Only `*.conf` files are picked up. Disable a job by renaming it
+- I job girano **sequenzialmente**, mai in parallelo. Il tempo totale è la
+  somma.
+- Un job fallito non abortisce il batch, ma cambia lo stato di uscita -
+  quindi `systemd` e `cron` segnaleranno il fallimento normalmente.
+- L'ordinamento è alfabetico, quindi anteponi un prefisso ai nomi dei file
+  se l'ordine conta: `10-database.conf`, `20-webserver.conf`,
+  `50-home.conf`.
+- Vengono raccolti solo i file `*.conf`. Disabilita un job rinominandolo
   `webserver.conf.disabled`.
-- Subdirectories are not searched.
-- The final `Batch run completed in Ns` line reports total wall time.
+- Le sottodirectory non vengono cercate.
+- La riga finale `Batch run completed in Ns` riporta il tempo totale di
+  esecuzione.
 
 ---
 
 ## Logging
 
-TNGBackup writes two independent streams.
+TNGBackup scrive due flussi indipendenti.
 
-### Human-readable log (`-l` / `--log` / `LOG_FILE`)
+### Log leggibile per l'uomo (`-l` / `--log` / `LOG_FILE`)
 
-Every `log()` call is appended, and Borg's combined output is `tee`d into the
-same file. Format:
+Ogni chiamata a `log()` viene appesa, e l'output combinato di Borg viene
+rediretto (`tee`) nello stesso file. Formato:
 
 ```
 [YYYY-MM-DD HH:MM:SS] [LEVEL] message
 ```
 
-Levels are `ERROR`, `WARN`, `INFO`, `DEBUG` (the last only when `DEBUG=y`).
-Timestamps use local time.
+I livelli sono `ERROR`, `WARN`, `INFO`, `DEBUG` (quest'ultimo solo quando
+`DEBUG=y`). I timestamp usano l'ora locale.
 
 ```
 [2026-09-05 03:00:01] [INFO] Starting backup from: /var/www /etc/nginx
@@ -1572,8 +1654,8 @@ Timestamps use local time.
 [2026-09-05 03:04:47] [INFO] Operation 'backup' finished with status SUCCESS in 286s
 ```
 
-A run that completed with warnings looks like this - note the `WARN` level and
-the `WARNING` status, and that the archive exists:
+Un'esecuzione completata con warning ha questo aspetto - nota il livello
+`WARN` e lo stato `WARNING`, e che l'archivio esiste:
 
 ```
 [2026-09-05 03:05:12] [INFO] Starting backup from: /home
@@ -1582,30 +1664,33 @@ the `WARNING` status, and that the archive exists:
 [2026-09-05 03:09:22] [INFO] Operation 'backup' finished with status WARNING in 250s
 ```
 
-When set via `--log`, the file is created and `chmod 600` before anything is
-written. When no log file is configured at all, Borg output goes to stdout
-unchanged - a missing `--log` never suppresses or breaks output.
+Quando impostato tramite `--log`, il file viene creato e sottoposto a
+`chmod 600` prima che venga scritto qualunque cosa. Quando non è configurato
+alcun file di log, l'output di Borg va su stdout inalterato - un `--log`
+mancante non sopprime né interrompe mai l'output.
 
-Writes are best-effort: if the log file becomes unwritable mid-run the message
-is dropped rather than aborting the backup.
+Le scritture sono best-effort: se il file di log diventa non scrivibile a
+metà esecuzione, il messaggio viene scartato invece di far abortire il
+backup.
 
 ### Audit log (`--audit-log` / `AUDIT_LOG_FILE`)
 
-One pipe-delimited record per completed operation, designed for parsing:
+Un record delimitato da pipe per ogni operazione completata, progettato per
+essere analizzato:
 
 ```
 TIMESTAMP_UTC_ISO8601 | operation | status | details | duration_seconds
 ```
 
-| Field | Description |
+| Campo | Descrizione |
 |---|---|
-| `TIMESTAMP_UTC_ISO8601` | UTC, `%Y-%m-%dT%H:%M:%SZ`, e.g. `2026-09-05T03:04:47Z`. |
+| `TIMESTAMP_UTC_ISO8601` | UTC, `%Y-%m-%dT%H:%M:%SZ`, ad es. `2026-09-05T03:04:47Z`. |
 | `operation` | `init`, `backup`, `list`, `check`, `prune`, `compact`, `info`, `mount`, `delete`, `extract`. |
-| `status` | One of `SUCCESS`, `WARNING` or `FAILED`. `WARNING` means Borg exited 1 - the operation completed, but something was noteworthy (unreadable or vanished files, typically). `FAILED` means Borg exited 2 or higher, or the script rejected the request before invoking Borg. |
-| `details` | Context: archive name, repository URI, `all-archives`, `repository`, the retention options applied by `prune`, or `ARCHIVE -> TARGET` for `mount` and `extract`. |
-| `duration_seconds` | Whole seconds since the script started. |
+| `status` | Uno tra `SUCCESS`, `WARNING` o `FAILED`. `WARNING` significa che Borg è uscito con 1 - l'operazione si è completata, ma qualcosa era degno di nota (tipicamente file illeggibili o spariti). `FAILED` significa che Borg è uscito con 2 o più, oppure che lo script ha rifiutato la richiesta prima di invocare Borg. |
+| `details` | Contesto: nome dell'archivio, URI del repository, `all-archives`, `repository`, le opzioni di retention applicate da `prune`, oppure `ARCHIVE -> TARGET` per `mount` ed `extract`. |
+| `duration_seconds` | Secondi interi trascorsi dall'avvio dello script. |
 
-Example:
+Esempio:
 
 ```
 2026-09-05T02:15:12Z | init | SUCCESS | /mnt/backup/borg-repo | 1
@@ -1617,16 +1702,16 @@ Example:
 2026-09-05T11:06:02Z | extract | SUCCESS | archive-20260905-030001 -> /tmp/restore | 162
 ```
 
-The `WARNING` line above is a real backup: an archive named
-`archive-20260905-030512` exists and can be restored from. Something was
-skipped, and the operational log says what.
+La riga `WARNING` sopra è un backup reale: esiste un archivio chiamato
+`archive-20260905-030512` e può essere usato per un ripristino. Qualcosa è
+stato saltato, e il log operativo dice cosa.
 
-In batch mode every config contributes its own record, so a three-config batch
-writes three lines.
+In modalità batch ogni configurazione contribuisce con il proprio record,
+quindi un batch di tre configurazioni scrive tre righe.
 
-If `AUDIT_LOG_FILE` is empty, auditing is silently disabled.
+Se `AUDIT_LOG_FILE` è vuoto, l'audit viene silenziosamente disabilitato.
 
-Useful queries:
+Query utili:
 
 ```bash
 # Real failures only - warnings are excluded, which is usually what you want
@@ -1652,15 +1737,17 @@ grep -qE "^${today}.*\| backup \| (SUCCESS|WARNING) \|" /var/log/tngbackup-audit
   || echo "NO BACKUP TODAY" | mail -s "Backup alert" ops@example.com
 ```
 
-The distinction matters when you write monitoring: a grep for `FAILED` now
-correctly ignores warnings, so it pages you only for backups that genuinely did
-not happen. Treat `WARNING` as something to review rather than something to
-wake up for - but do review it, since a growing count of skipped files is how a
-permissions or hardware problem announces itself.
+La distinzione conta quando scrivi il monitoraggio: un grep su `FAILED`
+ora ignora correttamente i warning, quindi ti avvisa solo per i backup che
+davvero non sono avvenuti. Tratta `WARNING` come qualcosa da rivedere
+piuttosto che qualcosa per cui svegliarsi - ma rivedilo comunque, poiché un
+numero crescente di file saltati è il modo in cui un problema di permessi o
+hardware si annuncia.
 
-### Log rotation
+### Rotazione dei log
 
-Neither file is rotated by the script. Add `/etc/logrotate.d/tngbackup`:
+Nessuno dei due file viene ruotato dallo script. Aggiungi
+`/etc/logrotate.d/tngbackup`:
 
 ```
 /var/log/tngbackup.log {
@@ -1684,72 +1771,74 @@ Neither file is rotated by the script. Add `/etc/logrotate.d/tngbackup`:
 }
 ```
 
-Keep the audit log much longer than the operational log: it is small, and it is
-the record that proves backups were running.
+Mantieni l'audit log molto più a lungo del log operativo: è piccolo, ed è
+il record che dimostra che i backup stavano girando.
 
 ---
 
-## Security notes
+## Note di sicurezza
 
-### The passphrase
+### La passphrase
 
-Losing the passphrase means permanently losing the backups. Losing control of
-it means someone else can read them. Both failure modes are unrecoverable, so
-treat it accordingly.
+Perdere la passphrase significa perdere permanentemente i backup. Perderne
+il controllo significa che qualcun altro può leggerli. Entrambe le modalità
+di fallimento sono irrecuperabili, quindi trattala di conseguenza.
 
-- Store it in a password manager or secrets store, separately from the machine
-  being backed up. A passphrase that only exists on the server it protects is
-  useless after that server dies.
-- Export and store the repository key too:
+- Conservala in un password manager o in un secrets store, separatamente
+  dalla macchina di cui viene fatto il backup. Una passphrase che esiste
+  solo sul server che protegge diventa inutile dopo che quel server muore.
+- Esporta e conserva anche la chiave del repository:
   ```bash
   borg key export /mnt/backup/borg-repo /root/borg-repo.key
   chmod 600 /root/borg-repo.key
   ```
-  For `keyfile*` encryption modes this is mandatory - the key lives only in
-  `~/.config/borg/keys` and the repository cannot be opened without it.
+  Per le modalità di cifratura `keyfile*` questo è obbligatorio - la chiave
+  vive solo in `~/.config/borg/keys` e il repository non può essere aperto
+  senza di essa.
 
-### Do not pass the passphrase on the command line
+### Non passare la passphrase sulla riga di comando
 
-`-p` / `--passphrase` is convenient for one-off local work and dangerous
-elsewhere. On a multi-user system, the full command line of every process is
-world-readable:
+`-p` / `--passphrase` è comodo per lavoro locale occasionale e pericoloso
+altrove. Su un sistema multi-utente, la riga di comando completa di ogni
+processo è leggibile da chiunque:
 
 ```bash
 ps auxww | grep tngbackup     # any user can see this
 ```
 
-It also lands in shell history. The script disables the shell's own history
-recording (`set +o history`), but that does not clean the interactive shell you
-typed the command into. Prefer, in order:
+Finisce anche nella cronologia della shell. Lo script disabilita la
+registrazione della cronologia della propria shell (`set +o history`), ma
+questo non pulisce la shell interattiva in cui hai digitato il comando.
+Preferisci, in ordine:
 
-1. A `chmod 600` config file containing `REPO_PASSPHRASE`.
-2. `BORG_PASSPHRASE` exported from a protected wrapper script or a systemd
-   `EnvironmentFile` with mode 600.
-3. `BORG_PASSCOMMAND`, letting Borg fetch the secret from a keyring or secret
-   store:
+1. Un file di configurazione con `chmod 600` contenente `REPO_PASSPHRASE`.
+2. `BORG_PASSPHRASE` esportata da uno script wrapper protetto o da un
+   `EnvironmentFile` systemd con modalità 600.
+3. `BORG_PASSCOMMAND`, che lascia a Borg il compito di recuperare il segreto
+   da un portachiavi o un secret store:
    ```bash
    export BORG_PASSCOMMAND='secret-tool lookup borg repo webserver'
    ```
-   Note that `validate_config` still requires a non-empty `REPO_PASSPHRASE`, so
-   set it to a placeholder if you drive Borg entirely through
+   Nota che `validate_config` richiede comunque una `REPO_PASSPHRASE` non
+   vuota, quindi imposta un segnaposto se guidi Borg interamente tramite
    `BORG_PASSCOMMAND`.
 
-The audit log never records the passphrase, and `tests/dispatch-test.sh`
-asserts that no passphrase leaks into either log file.
+L'audit log non registra mai la passphrase, e `tests/dispatch-test.sh`
+verifica che nessuna passphrase finisca in nessuno dei due file di log.
 
-### File permissions
+### Permessi dei file
 
-| File | Mode | Owner |
+| File | Modalità | Proprietario |
 |---|---|---|
 | `/etc/tngbackup.conf` | 0600 | root:root |
 | `/etc/tngbackup/` | 0700 | root:root |
 | `/etc/tngbackup/*.conf` | 0600 | root:root |
 | `/var/log/tngbackup.log` | 0600 | root:root |
 | `/var/log/tngbackup-audit.log` | 0600 | root:root |
-| exported key files | 0600 | root:root |
+| file di chiave esportati | 0600 | root:root |
 
-`install.sh` creates the config template and both log files with mode 0600. If
-you add files by hand:
+`install.sh` crea il modello di configurazione ed entrambi i log con
+modalità 0600. Se aggiungi file a mano:
 
 ```bash
 sudo chmod 600 /etc/tngbackup.conf
@@ -1758,83 +1847,89 @@ sudo chmod 600 /etc/tngbackup/*.conf
 sudo chmod 600 /var/log/tngbackup*.log
 ```
 
-Audit periodically:
+Verifica periodicamente:
 
 ```bash
 find /etc/tngbackup* /var/log/tngbackup*.log \
      \( -perm /o+rwx -o -perm /g+w \) -ls
 ```
 
-Anything printed by that command is too permissive.
+Qualunque cosa stampata da quel comando è troppo permissiva.
 
-### Config files are executed
+### I file di configurazione vengono eseguiti
 
-`load_config` uses `source`. A configuration file is running code, with the
-privileges of the invoking user - usually root. Never source a config file you
-did not write, never make the config directory group- or world-writable, and
-never keep a config file with a real passphrase inside a git repository. Add to
-`.gitignore`:
+`load_config` usa `source`. Un file di configurazione è codice in
+esecuzione, con i privilegi dell'utente che invoca - solitamente root. Non
+eseguire mai il source di un file di configurazione che non hai scritto, non
+rendere mai la directory di configurazione scrivibile dal gruppo o da
+tutti, e non tenere mai un file di configurazione con una passphrase reale
+dentro un repository git. Aggiungi a `.gitignore`:
 
 ```
 *.conf
 !docs/examples/**/*.conf
 ```
 
-### SSH hygiene
+### Igiene SSH
 
-- Use a dedicated key per client, with no passphrase (so it can run
-  unattended), protected by file permissions.
-- Restrict the key on the server with
+- Usa una chiave dedicata per client, senza passphrase (così può girare
+  senza presidio), protetta dai permessi dei file.
+- Restringi la chiave sul server con
   `command="borg serve --restrict-to-repository ... --append-only",restrict`.
-- The default `SSH_OPT` already includes `BatchMode=yes`, so a missing key
-  fails fast instead of hanging. If you override `SSH_OPT`, keep it.
-- `StrictHostKeyChecking=accept-new` (also a default) trusts the host key on
-  first contact. That is a reasonable compromise for automation, but on a
-  hostile network pre-seed `known_hosts` and use `StrictHostKeyChecking=yes`
-  instead:
+- Il `SSH_OPT` di default include già `BatchMode=yes`, così una chiave
+  mancante fallisce rapidamente invece di bloccarsi. Se sovrascrivi
+  `SSH_OPT`, mantienilo.
+- `StrictHostKeyChecking=accept-new` (anch'esso un default) si fida della
+  chiave dell'host al primo contatto. È un compromesso ragionevole per
+  l'automazione, ma su una rete ostile pre-semina `known_hosts` e usa invece
+  `StrictHostKeyChecking=yes`:
   ```bash
   ssh-keyscan -p 22 backup.example.com >> /root/.ssh/known_hosts
   ```
 
-### Non-interactive Borg defaults
+### Default non interattivi di Borg
 
-The script exports `BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes` and
-`BORG_RELOCATED_REPO_ACCESS_IS_OK=yes` so Borg can never block on those two
-confirmation prompts. Both are safety prompts, and suppressing them is a
-deliberate trade: reliability of unattended runs over a warning you could not
-answer anyway. Both honour an existing environment value, so set either to `no`
-if you would rather those conditions abort the run:
+Lo script esporta `BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=yes` e
+`BORG_RELOCATED_REPO_ACCESS_IS_OK=yes` così che Borg non possa mai
+bloccarsi su quei due prompt di conferma. Entrambi sono prompt di sicurezza,
+e sopprimerli è un compromesso deliberato: l'affidabilità delle esecuzioni
+non presidiate a scapito di un warning a cui comunque non potresti
+rispondere. Entrambi rispettano un valore già presente nell'ambiente, quindi
+imposta uno dei due a `no` se preferisci che quelle condizioni interrompano
+l'esecuzione:
 
 ```bash
 BORG_RELOCATED_REPO_ACCESS_IS_OK=no tngbackup backup --config /etc/tngbackup.conf
 ```
 
-### Cleanup behaviour
+### Comportamento di pulizia
 
-The `EXIT`/`INT`/`TERM` trap unsets `REPO_PASSPHRASE`, `BORG_PASSPHRASE`,
-`BORG_RSH`, `REPO_URI` and `BACKUP_PATH`, `shred`s any temporary config file it
-created, and attempts to unmount a leftover `MOUNT_PATH`. A successful `mount`
-clears `MOUNT_PATH` first, so the trap never tears down a mount you asked for.
-This limits exposure within the process lifetime; it does not protect the
-config file on disk, which is why permissions matter.
+Il trap `EXIT`/`INT`/`TERM` annulla `REPO_PASSPHRASE`, `BORG_PASSPHRASE`,
+`BORG_RSH`, `REPO_URI` e `BACKUP_PATH`, esegue `shred` su qualunque file di
+configurazione temporaneo che ha creato, e tenta di smontare un `MOUNT_PATH`
+residuo. Un `mount` riuscito annulla prima `MOUNT_PATH`, così il trap non
+smonta mai un mount che hai richiesto tu. Questo limita l'esposizione entro
+la durata di vita del processo; non protegge il file di configurazione su
+disco, motivo per cui i permessi contano.
 
-### DEBUG output
+### Output di DEBUG
 
-`DEBUG=y` prints diagnostics including the full Borg command line and the
-retention policy. It does not print the passphrase, but it does describe your
-repository layout - review the output before pasting it into a bug report or
-chat.
+`DEBUG=y` stampa diagnostiche compresa la riga di comando completa di Borg
+e la politica di retention. Non stampa la passphrase, ma descrive la
+struttura del tuo repository - rivedi l'output prima di incollarlo in una
+segnalazione di bug o in una chat.
 
 ---
 
-## Scheduling
+## Pianificazione
 
-Unattended runs must always name an operation explicitly - otherwise the
-interactive menu blocks forever on `read`.
+Le esecuzioni non presidiate devono sempre nominare esplicitamente
+un'operazione - altrimenti il menu interattivo si blocca per sempre su
+`read`.
 
 ### cron
 
-Edit root's crontab with `crontab -e`:
+Modifica il crontab di root con `crontab -e`:
 
 ```cron
 # Environment for all jobs below
@@ -1857,7 +1952,7 @@ MAILTO=ops@example.com
             --log /var/log/tngbackup.log --audit-log /var/log/tngbackup-audit.log
 ```
 
-Batch mode, all jobs in `/etc/tngbackup/`:
+Modalità batch, tutti i job in `/etc/tngbackup/`:
 
 ```cron
 0 3 * * * /usr/local/bin/tngbackup backup --config /etc/tngbackup/ \
@@ -1866,37 +1961,38 @@ Batch mode, all jobs in `/etc/tngbackup/`:
             --audit-log /var/log/tngbackup-audit.log
 ```
 
-Hourly backups of a fast-changing dataset:
+Backup orari di un dataset che cambia velocemente:
 
 ```cron
 15 * * * * /usr/local/bin/tngbackup backup --config /etc/tngbackup/database.conf \
              --audit-log /var/log/tngbackup-audit.log
 ```
 
-cron tips:
+Suggerimenti per cron:
 
-- cron's `PATH` is minimal. Either set `PATH` at the top of the crontab (as
-  above) or use absolute paths everywhere.
-- `%` is special in crontab and must be escaped as `\%` - relevant if you build
-  an archive name with `date +%F` inline.
-- Set `MAILTO` so failures are noticed. A backup that completed with warnings
-  exits 0 and so will *not* generate failure mail - watch the audit log for
-  `WARNING` records instead. Because the script exits non-zero on
-  failure (batch included), cron reports failures reliably. With `SHOWTEXT=y` a
-  successful run still prints output and generates mail every night; set
-  `SHOWTEXT="n"` in the config and rely on `LOG_FILE` so mail arrives only on
-  stderr output.
-- Stagger jobs across hosts so twenty machines do not hit the same backup
-  server at 03:00.
+- Il `PATH` di cron è minimale. Imposta `PATH` in cima al crontab (come
+  sopra) o usa percorsi assoluti ovunque.
+- `%` è speciale nel crontab e deve essere sfuggito come `\%` - rilevante se
+  costruisci un nome di archivio con `date +%F` in linea.
+- Imposta `MAILTO` così i fallimenti vengono notati. Un backup completato
+  con warning esce con 0 e quindi *non* genererà mail di fallimento -
+  monitora invece l'audit log per i record `WARNING`. Poiché lo script esce
+  con codice diverso da zero in caso di fallimento (batch incluso), cron
+  segnala i fallimenti in modo affidabile. Con `SHOWTEXT=y` un'esecuzione
+  riuscita stampa comunque output e genera mail ogni notte; imposta
+  `SHOWTEXT="n"` nella configurazione e affidati a `LOG_FILE` così la mail
+  arriva solo in caso di output su stderr.
+- Distribuisci i job su host diversi così venti macchine non colpiscono lo
+  stesso server di backup tutte alle 03:00.
 
 ### systemd timer
 
-More robust than cron for laptops and machines that are not always on:
-`Persistent=true` catches up a missed run, and `RandomizedDelaySec` spreads the
-load.
+Più robusto di cron per laptop e macchine non sempre accese:
+`Persistent=true` recupera un'esecuzione mancata, e `RandomizedDelaySec`
+distribuisce il carico.
 
-`install.sh` places both units in `/etc/systemd/system/` when that directory
-exists; otherwise install them by hand:
+`install.sh` posiziona entrambe le unit in `/etc/systemd/system/` quando
+quella directory esiste; altrimenti installale a mano:
 
 ```bash
 sudo install -m 0644 docs/tngbackup.service /etc/systemd/system/
@@ -1905,7 +2001,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now tngbackup.timer
 ```
 
-Check and drive it:
+Controllala e pilotala:
 
 ```bash
 systemctl list-timers tngbackup.timer
@@ -1914,17 +2010,18 @@ journalctl -u tngbackup.service -n 100 --no-pager
 systemctl status tngbackup.service
 ```
 
-Because the script exits with the operation's status, a failed backup marks the
-unit `failed` and can trigger an `OnFailure=` handler. A backup that completed
-with warnings exits 0, so the unit stays `succeeded` and no handler fires -
-which is the intended behaviour, since an archive was produced.
+Poiché lo script esce con lo stato dell'operazione, un backup fallito
+contrassegna la unit come `failed` e può innescare un handler `OnFailure=`.
+Un backup completato con warning esce con 0, quindi la unit resta
+`succeeded` e nessun handler scatta - che è il comportamento previsto,
+poiché è stato prodotto un archivio.
 
 ```ini
 # In tngbackup.service
 OnFailure=notify-admin@%n.service
 ```
 
-For several jobs, use a templated unit. `/etc/systemd/system/tngbackup@.service`:
+Per più job, usa una unit templata. `/etc/systemd/system/tngbackup@.service`:
 
 ```ini
 [Unit]
@@ -1941,23 +2038,25 @@ StandardError=journal
 Environment="DEBUG=n"
 ```
 
-Then enable one timer per instance: `systemctl enable --now tngbackup@webserver.timer`.
+Poi abilita un timer per ciascuna istanza:
+`systemctl enable --now tngbackup@webserver.timer`.
 
-Because `Type=oneshot` units run to completion, systemd will not start a second
-run while one is still going - a useful guard against overlapping backups that
-cron does not give you.
+Poiché le unit `Type=oneshot` girano fino al completamento, systemd non
+avvierà una seconda esecuzione mentre una è ancora in corso - una guardia
+utile contro backup sovrapposti che cron non ti dà.
 
 ---
 
-## Troubleshooting
+## Risoluzione dei problemi
 
-### Repository is locked
+### Il repository è bloccato
 
 ```
 Failed to create/acquire the lock /mnt/backup/borg-repo/lock.exclusive
 ```
 
-A Borg process holds the lock, or a previous one died without releasing it.
+Un processo Borg detiene il lock, oppure uno precedente è morto senza
+rilasciarlo.
 
 ```bash
 # 1. Is something actually running?
@@ -1971,42 +2070,46 @@ kill -TERM <pid>
 borg break-lock /mnt/backup/borg-repo
 ```
 
-A forgotten `tngbackup mount` is a common cause: `borg mount` daemonises and
-holds the repository. Check with `mount | grep borg` and `borg umount`.
+Un `tngbackup mount` dimenticato è una causa comune: `borg mount`
+demonizza e detiene il repository. Controlla con `mount | grep borg` e
+`borg umount`.
 
-Never break a lock while a Borg process might still be writing; that risks
-repository corruption. For a remote repository, check the **server** for
-running `borg serve` processes too.
+Non rimuovere mai un lock mentre un processo Borg potrebbe ancora stare
+scrivendo; questo rischia la corruzione del repository. Per un repository
+remoto, controlla anche il **server** per processi `borg serve` in
+esecuzione.
 
-To prevent overlap, wrap invocations in `flock`:
+Per prevenire sovrapposizioni, avvolgi le invocazioni in `flock`:
 
 ```bash
 flock -n /var/lock/tngbackup.lock /usr/local/bin/tngbackup backup --config /etc/tngbackup.conf
 ```
 
-Or use a `Type=oneshot` systemd service, which serialises by design.
+Oppure usa un servizio systemd `Type=oneshot`, che serializza per
+progettazione.
 
-### SSH fails or times out
+### SSH fallisce o scade
 
-Borg is invoked with stdin closed, so an SSH prompt now fails fast instead of
-hanging. Expect an immediate error rather than a stuck job.
+Borg viene invocato con stdin chiuso, quindi un prompt SSH ora fallisce
+rapidamente invece di bloccarsi. Aspettati un errore immediato piuttosto
+che un job bloccato.
 
-Almost always a key problem: an unknown host key, a passphrase-protected key,
-or a fallback to password auth.
+Quasi sempre un problema di chiave: una host key sconosciuta, una chiave
+protetta da passphrase, o un fallback all'autenticazione con password.
 
 ```bash
 # Reproduce non-interactively - this must succeed silently
 ssh -o BatchMode=yes -o ConnectTimeout=5 -p 22 borg@backup.example.com borg --version
 ```
 
-Check what the script is actually using:
+Controlla cosa sta effettivamente usando lo script:
 
 ```bash
 DEBUG=y DRYRUN=y tngbackup list --config /etc/tngbackup.conf
 # [DEBUG] Remote repository detected, BORG_RSH configured
 ```
 
-Fixes:
+Soluzioni:
 
 ```bash
 # Pre-seed the host key
@@ -2018,15 +2121,16 @@ ssh-keyscan -p 22 backup.example.com >> /root/.ssh/known_hosts
 SSH_OPT="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -i /root/.ssh/borg_ed25519"
 ```
 
-If long backups are dropped by a firewall, add keepalives:
+Se backup lunghi vengono interrotti da un firewall, aggiungi dei
+keepalive:
 
 ```bash
 SSH_OPT="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 -o ServerAliveInterval=30 -o ServerAliveCountMax=6"
 ```
 
-If `SSH_OPT` seems to be ignored, confirm `REPO_URI` really starts with
-`ssh://` - `BORG_RSH` is only set for that URI scheme, and a local-looking
-`user@host:/path` URI will not trigger it.
+Se sembra che `SSH_OPT` venga ignorato, conferma che `REPO_URI` inizi
+davvero con `ssh://` - `BORG_RSH` viene impostato solo per quello schema di
+URI, e un URI dall'aspetto locale come `user@host:/path` non lo attiverà.
 
 ### borg binary not found in PATH
 
@@ -2034,7 +2138,7 @@ If `SSH_OPT` seems to be ignored, confirm `REPO_URI` really starts with
 [ERROR] borg binary not found in PATH
 ```
 
-Either Borg is not installed, or the job's `PATH` does not include it.
+O Borg non è installato, oppure il `PATH` del job non lo include.
 
 ```bash
 command -v borg || echo "not installed"
@@ -2049,11 +2153,12 @@ sudo apk add borgbackup
 pipx install 'borgbackup[fuse]'
 ```
 
-If Borg is at `/usr/local/bin/borg` or in a pipx venv, set `PATH` explicitly in
-the crontab or add `Environment="PATH=..."` to the systemd unit.
+Se Borg si trova in `/usr/local/bin/borg` o in un venv pipx, imposta
+esplicitamente `PATH` nel crontab o aggiungi `Environment="PATH=..."` alla
+unit systemd.
 
-For remote repositories, Borg must also be installed on the server, and the
-server's non-interactive `PATH` must find it. If it does not:
+Per repository remoti, Borg deve essere installato anche sul server, e il
+`PATH` non interattivo del server deve trovarlo. Se non lo trova:
 
 ```bash
 export BORG_REMOTE_PATH=/usr/local/bin/borg
@@ -2061,110 +2166,123 @@ export BORG_REMOTE_PATH=/usr/local/bin/borg
 
 ### Permission denied
 
-Distinguish four cases:
+Distingui quattro casi:
 
-1. **Reading source files.** Borg skips unreadable files, reports them at the
-   end, still creates the archive, and exits 1. TNGBackup records that as
-   `WARNING` and exits 0 - the backup is usable. Read the log to see what was
-   skipped; if the source needs root, run the backup as root.
-2. **Writing to the repository.** The repository directory (or the remote SSH
-   user's target path) must be writable by the invoking user:
+1. **Lettura dei file sorgente.** Borg salta i file illeggibili, li
+   riporta alla fine, crea comunque l'archivio, ed esce con 1. TNGBackup lo
+   registra come `WARNING` ed esce con 0 - il backup è utilizzabile. Leggi
+   il log per vedere cosa è stato saltato; se la sorgente richiede root,
+   esegui il backup come root.
+2. **Scrittura sul repository.** La directory del repository (o il
+   percorso di destinazione dell'utente SSH remoto) deve essere scrivibile
+   dall'utente che invoca:
    ```bash
    ls -ld /mnt/backup/borg-repo
    sudo chown -R borg:borg /mnt/backup/borg-repo
    ```
-3. **Creating the log file.** `--log` does `touch` + `chmod 600` eagerly and
-   aborts the run if the parent directory is not writable. Let `install.sh`
-   create `/var/log/tngbackup.log`, or pick a writable path.
-4. **Creating a mountpoint or restore directory.** `mount` and `extract`
-   `mkdir -p` their target and fail cleanly (`Cannot create mountpoint:` /
-   `Cannot create restore path:`) if the parent is not writable.
+3. **Creazione del file di log.** `--log` esegue `touch` + `chmod 600` in
+   modo anticipato e abortisce l'esecuzione se la directory padre non è
+   scrivibile. Lascia che `install.sh` crei `/var/log/tngbackup.log`,
+   oppure scegli un percorso scrivibile.
+4. **Creazione di un mountpoint o di una directory di ripristino.**
+   `mount` ed `extract` eseguono `mkdir -p` sulla loro destinazione e
+   falliscono in modo pulito (`Cannot create mountpoint:` /
+   `Cannot create restore path:`) se il padre non è scrivibile.
 
-Beware SELinux/AppArmor on the log and repository paths - check
-`ausearch -m avc -ts recent` if permissions look correct but access is refused.
+Attenzione a SELinux/AppArmor sui percorsi del log e del repository -
+controlla `ausearch -m avc -ts recent` se i permessi sembrano corretti ma
+l'accesso viene comunque rifiutato.
 
-### Wrong passphrase
+### Passphrase errata
 
 ```
 passphrase supplied in BORG_PASSPHRASE, by BORG_PASSCOMMAND or via keyfile is incorrect.
 ```
 
-The passphrase does not match this repository. Check for:
+La passphrase non corrisponde a questo repository. Controlla:
 
-- Trailing whitespace or a stray newline in the config value.
-- Shell expansion inside double quotes. A passphrase containing `$`, `` ` `` or
-  `\` is mangled by `REPO_PASSPHRASE="p$$w0rd"`. Use single quotes:
-  `REPO_PASSPHRASE='p$$w0rd'`.
-- A leftover `BORG_PASSPHRASE` exported in the environment: `env | grep BORG`.
-- The wrong repository - `REPO_URI` pointing at a different repo than you think.
-- A `--passphrase` on the command line that you forgot about: it now genuinely
-  overrides the config file.
+- Spazi bianchi finali o un ritorno a capo estraneo nel valore della
+  configurazione.
+- Espansione della shell dentro virgolette doppie. Una passphrase
+  contenente `$`, `` ` `` o `\` viene alterata da `REPO_PASSPHRASE="p$$w0rd"`.
+  Usa virgolette singole: `REPO_PASSPHRASE='p$$w0rd'`.
+- Una `BORG_PASSPHRASE` residua esportata nell'ambiente: `env | grep BORG`.
+- Il repository sbagliato - `REPO_URI` che punta a un repository diverso
+  da quello che pensi.
+- Un `--passphrase` sulla riga di comando che avevi dimenticato: ora
+  sovrascrive genuinamente il file di configurazione.
 
-Verify by hand:
+Verifica a mano:
 
 ```bash
 BORG_PASSPHRASE='...' borg list /mnt/backup/borg-repo
 ```
 
-There is no way to recover a repository whose passphrase is genuinely lost.
+Non c'è modo di recuperare un repository la cui passphrase è genuinamente
+persa.
 
-### My CLI option seems to be ignored
+### La mia opzione CLI sembra essere ignorata
 
-Only `--repo` and `--passphrase` are re-applied after the config file is
-sourced. `--archive`, `--path`, `--mountpoint`, `--log` and `--audit-log` are
-set *before* sourcing, so a config file that assigns the corresponding variable
-unconditionally wins. Either remove that line from the config, or guard it:
+Solo `--repo` e `--passphrase` vengono riapplicati dopo che il file di
+configurazione è stato sourced. `--archive`, `--path`, `--mountpoint`,
+`--log` e `--audit-log` vengono impostati *prima* del sourcing, quindi un
+file di configurazione che assegna incondizionatamente la variabile
+corrispondente vince. Rimuovi quella riga dalla configurazione, oppure
+proteggila:
 
 ```bash
 ARCHIVE_NAME="${ARCHIVE_NAME:-}"
 LOG_FILE="${LOG_FILE:-/var/log/tngbackup.log}"
 ```
 
-In batch mode `--repo` and `--passphrase` are ignored entirely by design.
+In modalità batch `--repo` e `--passphrase` sono ignorati interamente per
+progettazione.
 
-### Archive already exists
+### L'archivio esiste già
 
 ```
 Archive archive-20260905-030001 already exists
 ```
 
-`ARCHIVE_NAME` is fixed rather than unique. Leave it empty so a timestamped
-name is generated. Note this is no longer a batch-mode hazard: `ARCHIVE_NAME`
-is reset between configs.
+`ARCHIVE_NAME` è fissa piuttosto che univoca. Lasciala vuota così viene
+generato un nome con timestamp. Nota che questo non è più un pericolo in
+modalità batch: `ARCHIVE_NAME` viene resettata tra le configurazioni.
 
-If two backups run within the same second, the generated names collide too -
-another reason to serialise runs with `flock` or a `oneshot` unit.
+Se due backup girano nello stesso secondo, anche i nomi generati collidono
+- un altro motivo per serializzare le esecuzioni con `flock` o una unit
+`oneshot`.
 
-### prune refuses to run
+### prune si rifiuta di girare
 
 ```
 [ERROR] No retention policy configured (set at least one of KEEP_LAST, ...)
 ```
 
-Every `KEEP_*` variable is empty or `0`. This is a guard, not a bug: a prune
-with no rules would delete every archive. Set at least one rule, or do not run
-`prune` on that repository.
+Ogni variabile `KEEP_*` è vuota o `0`. Questa è una protezione, non un
+bug: un prune senza regole eliminerebbe ogni archivio. Imposta almeno una
+regola, oppure non eseguire `prune` su quel repository.
 
-### prune deleted more than expected
+### prune ha eliminato più del previsto
 
-The `KEEP_*` defaults are non-empty (`KEEP_LAST=10`, `KEEP_DAILY=7`,
-`KEEP_WEEKLY=4`, `KEEP_MONTHLY=12`), so a config that omits retention still has
-a policy. Check what was actually applied - the audit log records the exact
-options used by each prune:
+I default di `KEEP_*` sono non vuoti (`KEEP_LAST=10`, `KEEP_DAILY=7`,
+`KEEP_WEEKLY=4`, `KEEP_MONTHLY=12`), quindi una configurazione che omette
+la retention ha comunque una politica. Controlla cosa è stato realmente
+applicato - l'audit log registra le opzioni esatte usate da ogni prune:
 
 ```bash
 awk -F' \\| ' '$2=="prune"{print $1, $4}' /var/log/tngbackup-audit.log
 ```
 
-In batch mode, remember `KEEP_*` is not reset between configs.
+In modalità batch, ricorda che `KEEP_*` non viene resettata tra le
+configurazioni.
 
-### The script hangs with no output on a server
+### Lo script si blocca senza output su un server
 
-You invoked it with no operation, and it is sitting on the interactive menu's
-`read`. Always pass an operation in automation. Borg itself can no longer hang
-on a prompt - stdin is closed for every invocation.
+L'hai invocato senza alcuna operazione, e sta aspettando sul `read` del
+menu interattivo. Passa sempre un'operazione in automazione. Borg stesso
+non può più bloccarsi su un prompt - stdin è chiuso per ogni invocazione.
 
-### General debugging recipe
+### Ricetta generale di debug
 
 ```bash
 # What would it do?
@@ -2183,41 +2301,47 @@ bash -n /etc/tngbackup.conf && echo "syntax OK"
 ./tests/dispatch-test.sh
 ```
 
-Redact repository URIs and passphrases before sharing any of that output.
+Oscura URI dei repository e passphrase prima di condividere qualunque
+parte di quell'output.
 
 ---
 
-## Exit codes
+## Codici di uscita
 
-| Code | Meaning |
+| Codice | Significato |
 |---|---|
-| `0` | Success, **or completed with warnings**. Also returned by `--help` and by choosing `0` in the menu. |
-| `1` | Failure detected by the script itself: invalid option, config not found or unreadable, failed validation (missing `REPO_URI`/`REPO_PASSPHRASE`/`BACKUP_PATH`, `borg` not on `PATH`), unknown operation, a missing `--archive` for `delete`/`extract`, an unconfigured retention policy for `prune`, or an unwritable mountpoint/restore directory. In batch mode, at least one config failed. |
-| `2` and above | Propagated from Borg itself (`2` is Borg's own "error"), or from the shell under `set -euo pipefail` - e.g. `126`/`127` for a command that could not be executed, `130` for interruption by Ctrl-C, `143` for `SIGTERM`. |
+| `0` | Successo, **oppure completato con warning**. Restituito anche da `--help` e scegliendo `0` nel menu. |
+| `1` | Fallimento rilevato dallo script stesso: opzione non valida, configurazione non trovata o illeggibile, validazione fallita (`REPO_URI`/`REPO_PASSPHRASE`/`BACKUP_PATH` mancanti, `borg` non nel `PATH`), operazione sconosciuta, un `--archive` mancante per `delete`/`extract`, una politica di retention non configurata per `prune`, oppure un mountpoint/directory di ripristino non scrivibili. In modalità batch, almeno una configurazione è fallita. |
+| `2` e superiori | Propagato da Borg stesso (`2` è l'"errore" proprio di Borg), oppure dalla shell sotto `set -euo pipefail` - ad es. `126`/`127` per un comando che non ha potuto essere eseguito, `130` per interruzione con Ctrl-C, `143` per `SIGTERM`. |
 
-The script exits with the **operation's own exit code**: `main` captures the
-result of `dispatch_operation` and exits with it, so Borg's status reaches the
-caller rather than being swallowed.
+Lo script esce con il **codice di uscita proprio dell'operazione**: `main`
+cattura il risultato di `dispatch_operation` ed esce con esso, così lo
+stato di Borg raggiunge il chiamante invece di essere inghiottito.
 
-Borg's convention is `0` success, `1` warning, `2` error, and `finish_operation`
-maps it deliberately:
+La convenzione di Borg è `0` successo, `1` warning, `2` errore, e
+`finish_operation` la mappa deliberatamente:
 
-- **`0` → `SUCCESS`, exit 0.**
-- **`1` → `WARNING`, exit 0.** The operation completed and produced its result;
-  something was merely noteworthy, most often a file that could not be read or
-  that vanished mid-backup. A backup like this **is** a usable backup, so it
-  does not fail the run, mark a systemd unit `failed`, or generate cron mail.
-  It is recorded as `WARNING` in the audit log so you can still find it.
-- **`2` or higher → `FAILED`, exit N.** A real error; the exit code passes
-  through unchanged.
+- **`0` → `SUCCESS`, uscita 0.**
+- **`1` → `WARNING`, uscita 0.** L'operazione si è completata e ha
+  prodotto il suo risultato; qualcosa era semplicemente degno di nota, il
+  più delle volte un file che non poteva essere letto o che è sparito
+  durante il backup. Un backup così **è** un backup utilizzabile, quindi
+  non fa fallire l'esecuzione, non contrassegna una unit systemd come
+  `failed`, né genera mail cron. Viene registrato come `WARNING` nell'audit
+  log così puoi comunque trovarlo.
+- **`2` o superiore → `FAILED`, uscita N.** Un errore reale; il codice di
+  uscita passa inalterato.
 
-Note the asymmetry: exit code `1` from `tngbackup` never means "Borg warned" -
-it means the script rejected the request before Borg ran. Borg's own warnings
-never reach the caller as a non-zero status.
+Nota l'asimmetria: il codice di uscita `1` di `tngbackup` non significa mai
+"Borg ha dato un warning" - significa che lo script ha rifiutato la
+richiesta prima che Borg girasse. I warning propri di Borg non raggiungono
+mai il chiamante come stato diverso da zero.
 
-**Batch mode** counts failures and returns 1 if any config failed, so a zero
-exit means every job at least completed. Warnings do not count as batch
-failures, for the same reason. The individual results are still worth auditing:
+La **modalità batch** conta i fallimenti e restituisce 1 se una
+qualunque configurazione è fallita, quindi un'uscita zero significa che
+ogni job si è almeno completato. I warning non contano come fallimenti del
+batch, per lo stesso motivo. I singoli risultati vale comunque la pena di
+sottoporli ad audit:
 
 ```bash
 #!/bin/bash
@@ -2238,30 +2362,34 @@ fi
 
 ---
 
-## Tests
+## Test
 
-Two test scripts live in `tests/`. Both are standalone Bash and take no
-arguments; both clean up after themselves.
+Due script di test vivono in `tests/`. Entrambi sono Bash autonomi e non
+prendono argomenti; entrambi puliscono dopo di sé.
 
 ### tests/dispatch-test.sh
 
-Runs anywhere - **no Borg installation required**. It puts a stub `borg` first
-on `PATH` that records the command line it was invoked with, then drives
-`tngbackup` through 26 checks covering:
+Gira ovunque - **non richiede un'installazione di Borg**. Mette per primo
+nel `PATH` uno stub `borg` che registra la riga di comando con cui è stato
+invocato, poi porta `tngbackup` attraverso 26 controlli che coprono:
 
-- dispatch of all ten operations to the right Borg subcommand
-- `borg create` argument construction: `BORG_OPT` word-splitting, one
-  `--exclude` per `BACKUP_EXCLUDE` item, archive name generation
-- retention option construction from the `KEEP_*` variables
-- CLI-versus-config precedence
-- dry-run mode executing nothing
-- the exit-code mapping: Borg `0` → `SUCCESS`/exit 0, `1` → `WARNING`/exit 0,
-  `>= 2` → `FAILED`/exit N
-- failure propagation: a failing Borg command makes `tngbackup` exit non-zero
-- audit log creation and record format
-- that no passphrase leaks into either log file
-- batch mode processing every config in a directory
-- `--help` output and rejection of an unknown operation
+- il dispatch di tutte e dieci le operazioni verso il sottocomando Borg
+  giusto
+- la costruzione degli argomenti di `borg create`: suddivisione in parole
+  di `BORG_OPT`, un `--exclude` per ogni elemento di `BACKUP_EXCLUDE`,
+  generazione del nome dell'archivio
+- la costruzione delle opzioni di retention a partire dalle variabili
+  `KEEP_*`
+- la precedenza CLI-contro-configurazione
+- la modalità dry-run che non esegue nulla
+- la mappatura dei codici di uscita: Borg `0` → `SUCCESS`/uscita 0, `1` →
+  `WARNING`/uscita 0, `>= 2` → `FAILED`/uscita N
+- la propagazione dei fallimenti: un comando Borg fallito fa uscire
+  `tngbackup` con codice diverso da zero
+- la creazione dell'audit log e il formato dei record
+- che nessuna passphrase finisca in nessuno dei due file di log
+- la modalità batch che elabora ogni configurazione in una directory
+- l'output di `--help` e il rifiuto di un'operazione sconosciuta
 
 ```bash
 ./tests/dispatch-test.sh
@@ -2273,15 +2401,16 @@ Passed: 26/26
 PASS: all dispatch checks passed
 ```
 
-Exit codes: `0` all passed, `1` one or more failed. Override the script under
-test with `TNGBACKUP=/usr/local/bin/tngbackup ./tests/dispatch-test.sh`.
+Codici di uscita: `0` tutto superato, `1` uno o più controlli falliti.
+Sovrascrivi lo script sotto test con
+`TNGBACKUP=/usr/local/bin/tngbackup ./tests/dispatch-test.sh`.
 
 ### tests/integration-test.sh
 
-Requires a real Borg (1.2+) and Bash 4+. It creates a throwaway repository in a
-temporary directory, exercises every operation against it for real - init,
-backup, list, info, check, prune, compact, extract with content verification,
-delete - verifies the audit log, then removes everything.
+Richiede un vero Borg (1.2+) e Bash 4+. Crea un repository usa e getta in
+una directory temporanea, esercita davvero ogni operazione contro di esso -
+init, backup, list, info, check, prune, compact, extract con verifica del
+contenuto, delete - verifica l'audit log, poi rimuove tutto.
 
 ```bash
 ./tests/integration-test.sh
@@ -2290,31 +2419,33 @@ delete - verifies the audit log, then removes everything.
 TNGB_TEST_MOUNT=y ./tests/integration-test.sh
 ```
 
-Without `TNGB_TEST_MOUNT=y` the mount check is skipped and reported as
-`[SKIP]`, since FUSE is not available everywhere.
+Senza `TNGB_TEST_MOUNT=y` il controllo di mount viene saltato e riportato
+come `[SKIP]`, poiché FUSE non è disponibile ovunque.
 
-Exit codes: `0` all passed, `1` one or more failed, **`2` prerequisites
-missing** (no Borg on `PATH`, or an unsupported Bash). A CI job can treat `2`
-as "skipped" rather than "broken".
+Codici di uscita: `0` tutto superato, `1` uno o più controlli falliti,
+**`2` prerequisiti mancanti** (nessun Borg nel `PATH`, oppure una Bash non
+supportata). Un job CI può trattare `2` come "saltato" piuttosto che
+"rotto".
 
-Run both before deploying a change, and run the integration test once against
-your production Borg version before trusting the tool with real data.
+Esegui entrambi prima di distribuire una modifica, ed esegui il test di
+integrazione una volta contro la versione di Borg di produzione prima di
+affidare allo strumento dati reali.
 
 ---
 
-## See also
+## Vedi anche
 
-- `install.sh` - installer and uninstaller
-- `docs/examples/tngbackup.conf` - annotated reference configuration
-- `docs/examples/local-backup.conf` - local repository example
-- `docs/examples/remote-backup.conf` - SSH repository example
-- `docs/examples/batch-configs/` - batch-mode examples
+- `install.sh` - installatore e disinstallatore
+- `docs/examples/tngbackup.conf` - configurazione di riferimento annotata
+- `docs/examples/local-backup.conf` - esempio di repository locale
+- `docs/examples/remote-backup.conf` - esempio di repository SSH
+- `docs/examples/batch-configs/` - esempi di modalità batch
 - `docs/tngbackup.1` - man page
-- `docs/tngbackup.service`, `docs/tngbackup.timer` - systemd units
-- `tests/dispatch-test.sh`, `tests/integration-test.sh` - test suite
-- [Borg Backup documentation](https://borgbackup.readthedocs.io/)
+- `docs/tngbackup.service`, `docs/tngbackup.timer` - unit systemd
+- `tests/dispatch-test.sh`, `tests/integration-test.sh` - suite di test
+- [Documentazione di Borg Backup](https://borgbackup.readthedocs.io/)
 - `borg(1)`
 
 ---
 
-TNGBackup 2.0.8 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial
+TNGBackup 2.0.9 - Autore: Massimo "RedFoxy Darrest" Cicciò - Licenza: CC BY-NC 4.0 (Non-Commercial) + Commercial
