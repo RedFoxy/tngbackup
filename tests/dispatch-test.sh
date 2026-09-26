@@ -49,6 +49,10 @@ case "$1" in
     --version) echo "borg 1.2.8" ;;
     info)      echo "Repository ID: stub" ;;
     list)      echo "stub-archive  Thu, 2026-01-01 00:00:00" ;;
+    # Mimic a real Borg repo (a directory containing a "config" file) so
+    # ensure_repo_exists()'s local-path check sees it as already initialized
+    # on every subsequent call, exactly like a real repository would.
+    init)      mkdir -p "$BORG_REPO" 2>/dev/null && : > "$BORG_REPO/config" 2>/dev/null ;;
     fail-me)   exit 2 ;;
 esac
 exit "${BORG_STUB_EXIT:-0}"
@@ -275,6 +279,82 @@ if "$TNGBACKUP" backup --config "$HOOK_CONFIG" >/dev/null 2>&1; then
     pass "a failing POSTRUN does not change the backup status"
 else
     failed "POSTRUN failure isolation" "tngbackup exited non-zero because of a failing POSTRUN"
+fi
+
+# --- repo auto-creation & companion operations ------------------------------
+# Uses its own stateful stub, keyed by $BORG_REPO (exported by tngbackup.sh):
+# `info`/`create` fail until `init` has created a marker inside the repo dir,
+# so CREATE_REPO's probe-then-init logic can be exercised for real.
+
+echo ""
+echo "=== Repo auto-creation & companion ops ==="
+
+STATEFUL_BIN="$WORKDIR/stateful-bin"
+mkdir -p "$STATEFUL_BIN"
+export STATEFUL_CALLS="$WORKDIR/stateful-calls.log"
+
+cat > "$STATEFUL_BIN/borg" <<'STUB'
+#!/bin/bash
+echo "borg $*" >> "$STATEFUL_CALLS"
+marker="$BORG_REPO/.stub-initialized"
+case "$1" in
+    info)   [ -f "$marker" ] && exit 0 || exit 2 ;;
+    init)   mkdir -p "$BORG_REPO" && touch "$marker"; exit 0 ;;
+    create) [ -f "$marker" ] && exit 0 || exit 2 ;;
+esac
+exit 0
+STUB
+chmod +x "$STATEFUL_BIN/borg"
+
+COMPANION_CONFIG="$WORKDIR/companion.conf"
+
+cat > "$COMPANION_CONFIG" <<EOF
+REPO_URI="$WORKDIR/new-repo"
+REPO_PASSPHRASE="secret-passphrase"
+BACKUP_PATH="$WORKDIR/data"
+KEEP_LAST="5"
+SHOWTEXT="n"
+CREATE_REPO="y"
+CHECK_BACKUP="1"
+PRUNE_BACKUP="2"
+COMPACT_BACKUP="2"
+EOF
+
+: > "$STATEFUL_CALLS"
+if PATH="$STATEFUL_BIN:$PATH" "$TNGBACKUP" backup --config "$COMPANION_CONFIG" >/dev/null 2>&1; then
+    pass "backup succeeds against a missing repository when CREATE_REPO=y"
+else
+    failed "CREATE_REPO auto-init" "backup failed even though CREATE_REPO=y should auto-create the repo"
+fi
+
+ORDER="$(grep -E '^borg (info|init|check|create|prune|compact)' "$STATEFUL_CALLS" | awk '{print $2}' | tr '\n' ' ')"
+if [ "$ORDER" = "init check create prune compact " ]; then
+    pass "companion ops run in the right order: init, check(before), create, prune+compact(after)"
+else
+    failed "companion op ordering" "expected 'init check create prune compact', got '$ORDER'"
+fi
+
+if grep -q '^borg check --repository-only$' "$STATEFUL_CALLS"; then
+    pass "the pre-backup check targets the whole repository, not the not-yet-created archive"
+else
+    failed "pre-backup check scope" "expected a repository-only check before the archive exists"
+fi
+
+: > "$STATEFUL_CALLS"
+cat > "$COMPANION_CONFIG" <<EOF
+REPO_URI="$WORKDIR/another-missing-repo"
+REPO_PASSPHRASE="secret-passphrase"
+BACKUP_PATH="$WORKDIR/data"
+KEEP_LAST="5"
+SHOWTEXT="n"
+CREATE_REPO="n"
+EOF
+if PATH="$STATEFUL_BIN:$PATH" "$TNGBACKUP" backup --config "$COMPANION_CONFIG" >/dev/null 2>&1; then
+    failed "CREATE_REPO=n" "backup should fail against a missing repository when CREATE_REPO=n"
+elif grep -q '^borg init' "$STATEFUL_CALLS"; then
+    failed "CREATE_REPO=n" "borg init was called even though CREATE_REPO=n"
+else
+    pass "CREATE_REPO=n leaves a missing repository untouched and the backup fails"
 fi
 
 # --- audit log -------------------------------------------------------------

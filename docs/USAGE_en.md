@@ -6,7 +6,7 @@ configuration, credential handling, retention policy and audit logging so that
 a full backup routine can be expressed in a single small configuration file and
 driven by one command.
 
-This document describes version **2.0.2** of the `tngbackup` script.
+This document describes version **2.0.8** of the `tngbackup` script.
 
 ---
 
@@ -719,8 +719,9 @@ All archives:              612.44 GB            420.10 GB             52.87 GB
 
 Notes:
 
-- Backups are **not** pruned automatically. Run `prune` (and `compact`) as
-  separate steps - see [Scheduling](#scheduling).
+- Backups are **not** pruned automatically unless `PRUNE_BACKUP` is set (see
+  below). Otherwise run `prune` (and `compact`) as separate steps - see
+  [Scheduling](#scheduling).
 - Consecutive backups of the same data are cheap: Borg deduplicates at the
   chunk level, so an unchanged 40 GB tree costs a few megabytes.
 - Borg exit code 1 means "completed with warnings" (unreadable or vanished
@@ -736,11 +737,80 @@ Common errors:
 | Message | Cause | Fix |
 |---|---|---|
 | `BACKUP_PATH not set; no files to backup` | Missing source | Set `BACKUP_PATH` or pass `--path`. |
-| `Repository ... does not exist` | Never initialised | Run `tngbackup init` first. |
+| `Repository ... does not exist` | Never initialised and `CREATE_REPO=n` | Run `tngbackup init` first, or leave `CREATE_REPO=y` (the default) to auto-create it. |
 | `Failed to create/acquire the lock` | Concurrent run or stale lock | See [Troubleshooting](#troubleshooting). |
 | `passphrase supplied ... is incorrect` | Wrong `REPO_PASSPHRASE` | Fix the config; a repository cannot be recovered without the right passphrase. |
 | `Archive ... already exists` | Duplicate `ARCHIVE_NAME` | Use a unique name or leave `ARCHIVE_NAME` empty. |
 | `No space left on device` | Repository filesystem full | Prune and compact, or add capacity. |
+
+#### Backup hooks (`PRERUN` / `POSTRUN`)
+
+Run a command or script immediately before and/or after the backup:
+
+- **`PRERUN`**: runs before `borg create`. If it exits non-zero, the backup is
+  **aborted** (recorded as `FAILED`, audit-logged with details `PRERUN hook
+  failed`) and `borg create` never runs.
+- **`POSTRUN`**: always runs after the backup attempt (success, warning, or
+  failure). Its own exit status is only logged (`WARN` if non-zero) and never
+  changes the backup's recorded status.
+
+Both are executed with `bash -c "$PRERUN"` / `bash -c "$POSTRUN"`, so they can
+be a single command or a `&&`/`;`-chained sequence, and both honour `DRYRUN`
+(logged as `[DRY-RUN] PRERUN: ...` / `[DRY-RUN] POSTRUN: ...` without actually
+running).
+
+```bash
+PRERUN="mysqldump -u root -p$DB_PASS mydb > /tmp/mydb.sql"
+POSTRUN="rm -f /tmp/mydb.sql"
+```
+
+#### Repository auto-creation (`CREATE_REPO` / `CREATE_REPO_DIR`)
+
+- **`CREATE_REPO`** (default `y`): if the repository does not exist yet,
+  `backup` initializes it automatically (`borg init --encryption=$BORG_ENCRYPTION`)
+  before proceeding, instead of failing with `Repository ... does not exist`.
+  Set to `n` to require an explicit `tngbackup init` beforehand.
+- **`CREATE_REPO_DIR`** (default `y`, local repositories only): creates the
+  parent directory of `REPO_URI` if it is missing, before checking whether the
+  repository itself exists.
+
+For a local `REPO_URI`, existence is checked cheaply by looking for a
+`config` file inside the repository directory (how a Borg repository looks on
+disk) - this avoids relying on `borg info`'s exit code, which can be non-zero
+for unrelated reasons (a stale lock, a transient error) and would otherwise
+risk re-initializing a perfectly healthy repository. For an `ssh://`
+repository there is no such shortcut, so `borg info` is used as a best-effort
+probe instead.
+
+Under `DRYRUN=y`, nothing is created or touched; the log states what
+would happen (`[DRY-RUN] Would initialize repository if missing: ...`).
+
+#### Companion operations (`CHECK_BACKUP` / `PRUNE_BACKUP` / `COMPACT_BACKUP`)
+
+Run `check`, `prune` and/or `compact` automatically around the backup, each as
+its own operation with its own audit log entry (so you keep the same
+per-phase traceability as running them by hand). Each variable takes:
+
+- `0` - disabled (default)
+- `1` - run before `borg create`
+- `2` - run after `borg create`
+
+When several are set to the same phase, they run in this fixed order: `check`,
+`prune`, `compact`. A `check` requested for phase `1` always checks the whole
+repository (`--repository-only`), never a specific archive - the archive
+`backup` is about to create does not exist yet.
+
+```bash
+# Full pipeline in one command: check -> backup -> prune -> compact
+CHECK_BACKUP=1
+PRUNE_BACKUP=2
+COMPACT_BACKUP=2
+```
+
+None of these three ever abort the backup if they fail: unlike `PRERUN`, a
+failing companion check/prune/compact is only recorded under its own
+operation name in the audit log; `backup` still proceeds (or keeps its own
+result if it already ran).
 
 ### list
 
@@ -1183,7 +1253,7 @@ Running `tngbackup` with no operation (and no `--help`) shows a menu:
 
 ```
 ╔═══════════════════════════════════╗
-║      TNGBackup v2.0.7             ║
+║      TNGBackup v2.0.8             ║
 ╚═══════════════════════════════════╝
 
   1) Initialize repository
@@ -2248,4 +2318,4 @@ your production Borg version before trusting the tool with real data.
 
 ---
 
-TNGBackup 2.0.7 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial
+TNGBackup 2.0.8 - Author: Massimo "RedFoxy Darrest" Cicciò - License: CC BY-NC 4.0 (Non-Commercial) + Commercial

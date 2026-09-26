@@ -5,7 +5,7 @@
 # SCRIPT METADATA
 #
 SCRIPT_NAME="tngbackup"
-SCRIPT_VERSION="2.0.7"
+SCRIPT_VERSION="2.0.8"
 SCRIPT_DESC="The Next Generation Borg Backup management utility"
 SCRIPT_AUTHOR="Massimo \"RedFoxy Darrest\" Cicciò"
 SCRIPT_LICENSE="CC BY-NC 4.0 (Non-Commercial) + Commercial License"
@@ -31,6 +31,8 @@ SHOWTEXT="${SHOWTEXT:-y}"
 # Repository configuration
 REPO_URI="${REPO_URI:-}"
 REPO_PASSPHRASE="${REPO_PASSPHRASE:-}"
+CREATE_REPO="${CREATE_REPO:-y}"
+CREATE_REPO_DIR="${CREATE_REPO_DIR:-y}"
 
 # Backup configuration
 BACKUP="${BACKUP:-y}"
@@ -43,6 +45,11 @@ MOUNT_PATH="${MOUNT_PATH:-/mnt/borg}"
 # Backup hooks
 PRERUN="${PRERUN:-}"
 POSTRUN="${POSTRUN:-}"
+
+# Companion operations around backup: 0=disabled, 1=before backup, 2=after backup
+CHECK_BACKUP="${CHECK_BACKUP:-0}"
+PRUNE_BACKUP="${PRUNE_BACKUP:-0}"
+COMPACT_BACKUP="${COMPACT_BACKUP:-0}"
 
 # Borg options
 BORG_ENCRYPTION="${BORG_ENCRYPTION:-repokey-blake2}"
@@ -736,6 +743,85 @@ run_postrun() {
     fi
 }
 
+# Create the repository (and, for local paths, its parent directory) when it
+# does not exist yet. Controlled by CREATE_REPO/CREATE_REPO_DIR; a no-op for
+# an already-initialized repository.
+ensure_repo_exists() {
+    if [ "$CREATE_REPO" != "y" ]; then
+        return 0
+    fi
+
+    local is_remote=0
+    case "$REPO_URI" in
+        ssh://*) is_remote=1 ;;
+    esac
+
+    if [ "$is_remote" -eq 0 ]; then
+        if [ "$CREATE_REPO_DIR" = "y" ] && [ ! -d "$REPO_URI" ]; then
+            debug "Creating repository directory: $REPO_URI"
+            if [ "$DRYRUN" != "y" ]; then
+                mkdir -p "$REPO_URI" || {
+                    error "Cannot create repository directory: $REPO_URI"
+                    return 1
+                }
+            fi
+        fi
+
+        # A local Borg repository is a directory containing a "config" file.
+        # Checking for it directly is cheap and reliable, unlike relying on
+        # `borg info`'s exit code, which can be non-zero for unrelated
+        # reasons (lock contention, transient errors) and would otherwise
+        # make this logic try to re-initialize a perfectly healthy repo.
+        if [ -f "$REPO_URI/config" ]; then
+            return 0
+        fi
+    elif [ "$DRYRUN" != "y" ] && borg info < /dev/null >/dev/null 2>&1; then
+        # No cheap local check exists for a remote repository: fall back to
+        # asking Borg directly.
+        return 0
+    fi
+
+    if [ "$DRYRUN" = "y" ]; then
+        log "INFO" "[DRY-RUN] Would initialize repository if missing: $REPO_URI"
+        return 0
+    fi
+
+    log "INFO" "Repository not found, initializing: $REPO_URI"
+    local rc=0
+    borg init --encryption="$BORG_ENCRYPTION" < /dev/null 2>&1 | tee_log || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        error "Failed to auto-create repository: $REPO_URI"
+        return "$rc"
+    fi
+    return 0
+}
+
+# Run the CHECK_BACKUP/PRUNE_BACKUP/COMPACT_BACKUP companion operations
+# configured for the given phase (1=before backup, 2=after backup). Each
+# reuses its own operation function, so it gets its own audit log entry.
+run_companion_ops() {
+    local phase="$1"
+
+    if [ "$CHECK_BACKUP" = "$phase" ]; then
+        if [ "$phase" = "1" ]; then
+            # The archive to be created does not exist yet: always check the
+            # whole repository rather than a specific, not-yet-existing archive.
+            local saved_archive="$ARCHIVE_NAME"
+            ARCHIVE_NAME=""
+            borg_check
+            ARCHIVE_NAME="$saved_archive"
+        else
+            borg_check
+        fi
+    fi
+    if [ "$PRUNE_BACKUP" = "$phase" ]; then
+        borg_prune
+    fi
+    if [ "$COMPACT_BACKUP" = "$phase" ]; then
+        borg_compact
+    fi
+}
+
 borg_backup() {
     log "INFO" "Starting backup from: $BACKUP_PATH"
 
@@ -757,6 +843,14 @@ borg_backup() {
     fi
 
     setup_borg_env
+
+    if ! ensure_repo_exists; then
+        OPERATION_STATUS="FAILED"
+        audit_log "backup" "FAILED" "repository auto-creation failed" "$(calculate_duration)"
+        return 1
+    fi
+
+    run_companion_ops 1
 
     # Build the argument list as an array: no eval, no quoting surprises,
     # and paths containing spaces are handled correctly.
@@ -789,6 +883,8 @@ borg_backup() {
 
     local rc=0
     run_borg create "${args[@]}" || rc=$?
+
+    run_companion_ops 2
 
     run_postrun
 

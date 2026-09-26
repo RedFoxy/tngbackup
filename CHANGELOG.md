@@ -4,6 +4,17 @@ All notable changes to the TNGBackup project are documented in this file.
 
 ---
 
+## [2.0.8] — 2026-09-26
+
+### Added
+
+- **Repository auto-creation (`CREATE_REPO` / `CREATE_REPO_DIR`):** `backup` now initializes a missing repository automatically instead of failing with `Repository ... does not exist`. `CREATE_REPO` (default `y`) controls this; `CREATE_REPO_DIR` (default `y`, local repositories only) also creates the parent directory if missing. Local repositories are checked cheaply (looking for the `config` file inside the repo directory) rather than relying on `borg info`'s exit code, which can be non-zero for unrelated reasons; `ssh://` repositories fall back to `borg info` since no local check is possible. `DRYRUN=y` performs no auto-creation.
+- **Companion operations (`CHECK_BACKUP` / `PRUNE_BACKUP` / `COMPACT_BACKUP`):** each can run `check`/`prune`/`compact` before (`1`) or after (`2`) `backup`, in that fixed order, reusing the existing operation functions so each still gets its own audit log entry. A pre-backup `check` always runs `--repository-only` (the archive about to be created does not exist yet). None of the three ever abort the backup on failure — only `PRERUN` does that.
+
+Both features were already documented in `CLAUDE.md`/README as part of the planned v2.1 feature set; they are now actually implemented and covered by new `tests/dispatch-test.sh` cases (repo auto-init, `CREATE_REPO=n`, companion-op ordering, pre-backup check scope).
+
+---
+
 ## [2.0.7] — 2026-09-26
 
 ### Fixed

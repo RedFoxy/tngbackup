@@ -1,4 +1,4 @@
-# TNGBackup v2.0.7 — The Next Generation Borg Backup
+# TNGBackup v2.0.8 — The Next Generation Borg Backup
 
 **Multi-language documentation:** [Italiano](#-italiano) | [English](#-english)
 
@@ -10,7 +10,7 @@
 
 TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup**. Semplifica operazioni complesse come backup locali e remoti, verifiche di integrità, gestione della conservazione, montaggio archivi e ripristino selettivo di file — il tutto da un'unica interfaccia.
 
-**Versione:** 2.0.7  
+**Versione:** 2.0.8  
 **Licenza:** CC BY-NC 4.0 (Non-Commerciale) + Commercial License  
 **Requisiti:** Bash 4.0+, Borg Backup 1.2+
 
@@ -19,6 +19,8 @@ TNGBackup è uno strumento unificato per la gestione di backup via **Borg Backup
 - **10 Operazioni Borg:** init, backup, list, mount, check, compact, prune, info, delete, extract
 - **Menu Interattivo:** Scegli l'operazione senza ricordare i comandi
 - **Backup Hooks:** PRERUN (pre-backup) e POSTRUN (post-backup) per dump DB, cleanup, notifiche
+- **Operazioni Companion:** CHECK/PRUNE/COMPACT automatici prima e/o dopo il backup
+- **Auto-Creazione Repository:** `CREATE_REPO`/`CREATE_REPO_DIR` inizializzano il repository al primo backup, senza `init` manuale
 - **Modalità Batch:** Elabora molteplici config da una cartella sequenzialmente
 - **Configurazione Flessibile:** File di config, variabili di ambiente, o parametri CLI
 - **Precedenza Config:** CLI > File di Config > Variabili d'Ambiente > Default
@@ -144,7 +146,7 @@ ps aux | grep tngbackup
 
 TNGBackup is a unified management tool for **Borg Backup** operations. It simplifies complex tasks like local and remote backups, integrity verification, retention management, archive mounting, and selective file recovery — all from a single interface.
 
-**Version:** 2.0.7  
+**Version:** 2.0.8  
 **License:** CC BY-NC 4.0 (Non-Commercial) + Commercial License  
 **Requirements:** Bash 4.0+, Borg Backup 1.2+
 
@@ -153,6 +155,8 @@ TNGBackup is a unified management tool for **Borg Backup** operations. It simpli
 - **10 Borg Operations:** init, backup, list, mount, check, compact, prune, info, delete, extract
 - **Interactive Menu:** Choose operations without memorizing commands
 - **Backup Hooks:** PRERUN (pre-backup) and POSTRUN (post-backup) for DB dumps, cleanup, notifications
+- **Companion Operations:** automatic CHECK/PRUNE/COMPACT before and/or after backup
+- **Repository Auto-Creation:** `CREATE_REPO`/`CREATE_REPO_DIR` initialize the repository on the first backup, no manual `init` needed
 - **Batch Mode:** Process multiple configs from a directory sequentially
 - **Flexible Configuration:** Config file, environment variables, or CLI arguments
 - **Config Precedence:** CLI > Config File > Environment Variables > Defaults
